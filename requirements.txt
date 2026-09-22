@@ -19,6 +19,12 @@
 #   - autoawq-kernels chi nap duoc khi torch da duoc import truoc (torch >= 2.5.1).
 #   - numpy phai < 2 de tuong thich voi torch 2.5.1 va opencv 4.10.
 
+# TANG KHOP KICH BAN:
+#   - Qwen3-Reranker-4B chay duoc ngay trong bo nay (transformers 4.51.3 da ho tro
+#     kien truc Qwen3 tu ban 4.51.0), khong can cai them gi.
+#   - Qwen3-VL-Embedding-2B thi KHONG: no doi transformers>=4.57 + torch 2.8, se lam
+#     vo AutoAWQ. No song o venv rieng .venv-embed, xem embedding_sidecar/requirements.txt.
+
 # --- Mo hinh & suy luan ---
 transformers==4.51.3
 tokenizers==0.21.4

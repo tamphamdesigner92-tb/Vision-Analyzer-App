@@ -1,5 +1,7 @@
 # Môi trường ảo Python (nặng, cài lại bằng requirements.txt)
 .venv/
+# venv thu hai cua sidecar nhung - cai lai bang setup_embedding_sidecar.bat
+.venv-embed/
 venv/
 __pycache__/
 *.pyc

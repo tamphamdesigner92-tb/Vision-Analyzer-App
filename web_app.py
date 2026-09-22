@@ -20,11 +20,15 @@ import uuid
 import zipfile
 
 import cv2
+import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+import app_status
+import embedding_client
+import script_matcher
 import vision_analyzer_app as vision
 from vision_analyzer_app import LocalVisionAnalyzer
 
@@ -53,8 +57,28 @@ DEFAULT_VIDEO_PROMPT = (
     "và nêu rõ hành động của từng nhân vật/đối tượng."
 )
 
+# Thu muc luu ke hoach dung. Ten bat dau bang "_" de khong bi nham la ket qua phan tich
+# cua mot file media khi quet vision_storage/.
+PLANS_DIR = os.path.join(STORAGE_DIR, "_plans")
+# Cache cac doan video da cat cho che do Chi-Embedding (xem script_matcher.collect_raw_candidates)
+RAW_SEGMENTS_DIR = os.path.join(STORAGE_DIR, "_raw_video_segments")
+
+# Cascade: duoi nguong nay thi reranker cham het con re hon la goi them sidecar nhung.
+CASCADE_MIN_CANDIDATES = 24
+CASCADE_TOP_K = 8
+
+REUSE_CHOICES = [
+    {"value": "segment", "label": "Mỗi đoạn chỉ dùng một lần (mặc định)",
+     "hint": "Hai cảnh kịch bản không bao giờ nhận cùng một đoạn phim; hai đoạn khác nhau của cùng một file thì vẫn được."},
+    {"value": "file", "label": "Mỗi file chỉ dùng một lần",
+     "hint": "Ép mỗi cảnh kịch bản lấy từ một file nguồn khác nhau. Cần số file ≥ số cảnh."},
+    {"value": "free", "label": "Cho phép dùng lại thoải mái",
+     "hint": "Mỗi cảnh lấy đoạn điểm cao nhất, kể cả khi trùng với cảnh khác."},
+]
+
 os.makedirs(MEDIA_DIR, exist_ok=True)
 os.makedirs(STORAGE_DIR, exist_ok=True)
+os.makedirs(PLANS_DIR, exist_ok=True)
 
 app = FastAPI(title="Vision Analyzer")
 
@@ -63,12 +87,15 @@ app = FastAPI(title="Vision Analyzer")
 # QUẢN LÝ JOB (một GPU nên chỉ chạy một job mỗi lúc)
 # ==========================================
 class Job:
-    def __init__(self, job_id, filename, media_type, prompt, fps=DEFAULT_FPS):
+    def __init__(self, job_id, kind="analyze", filename=None, media_type=None, prompt=None,
+                 fps=DEFAULT_FPS, payload=None):
         self.id = job_id
+        self.kind = kind                # analyze (xem anh/video) | match (khop kich ban)
         self.filename = filename
         self.media_type = media_type
         self.prompt = prompt
         self.fps = fps
+        self.payload = payload or {}
         self.status = "queued"          # queued | running | done | error
         self.percent = 0.0
         self.messages = []
@@ -79,6 +106,7 @@ class Job:
     def to_dict(self):
         return {
             "id": self.id,
+            "kind": self.kind,
             "filename": self.filename,
             "media_type": self.media_type,
             "status": self.status,
@@ -93,7 +121,38 @@ jobs = {}
 jobs_lock = threading.Lock()
 job_queue = queue.Queue()
 analyzer = None
+matcher = None
 analyzer_lock = threading.Lock()
+
+
+# ==========================================
+# CHIA CHO TREN GPU
+# ==========================================
+# 16GB VRAM khong du cho Qwen2.5-VL-7B-AWQ (~7GB) va Qwen3-Reranker-4B fp16 (~8GB) cung
+# luc: cong them KV cache va activation la tran. Nen mot thoi diem chi mot mo hinh duoc
+# nam tren GPU, va chuyen tac vu thi doi cho. Moi lan doi mat ~30 giay nap lai, nhung
+# doi lai khong bao gio OOM giua chung.
+def _free_analyzer(report=None):
+    global analyzer
+    if analyzer is None:
+        return
+    if report:
+        report("[*] Đang nhường GPU: giải phóng mô hình thị giác Qwen2.5-VL...", None)
+    del analyzer.model
+    analyzer = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    app_status.set_model_state("vision", "trong")
+
+
+def _free_matcher(report=None):
+    global matcher
+    if matcher is None or matcher.model is None:
+        return
+    if report:
+        report("[*] Đang nhường GPU: giải phóng bộ não khớp kịch bản...", None)
+    matcher.unload()
+    app_status.set_model_state("reranker", "trong")
 
 # ==========================================
 # THEO DOI TAB TRINH DUYET: dong tab => tat ung dung
@@ -163,6 +222,168 @@ def _result_stem_for(filename):
     return re.sub(r"[^\w\-. ]", "_", stem).strip() or "khong_ten"
 
 
+def _shortlist_with_embeddings(scenes, candidates, on_progress, force=False):
+    """Tang loc nhanh (tuy chon): sidecar Qwen3-VL-Embedding nhung thang anh + mo ta.
+
+    Tra ve (shortlist, ma tran cosine) hoac (None, None) neu sidecar chua bat / loi.
+    Chi dang cong khi kho canh quay du lon: voi vai chuc canh thi reranker cham het con
+    nhanh hon la nap them mot mo hinh nua len GPU.
+    """
+    if len(candidates) < CASCADE_MIN_CANDIDATES and not force:
+        on_progress(
+            f"[*] Bỏ qua tầng lọc nhanh: chỉ có {len(candidates)} cảnh quay, "
+            f"cần từ {CASCADE_MIN_CANDIDATES} trở lên (tích ô \"ép dùng\" nếu muốn chạy thử).",
+            None,
+        )
+        return None, None
+    if force and len(candidates) < CASCADE_MIN_CANDIDATES:
+        on_progress(
+            f"[*] Ép dùng tầng lọc nhanh dù kho chỉ có {len(candidates)} cảnh quay "
+            f"(bình thường cần {CASCADE_MIN_CANDIDATES}).", None
+        )
+    if embedding_client.health() is None:
+        on_progress(
+            "[*] Sidecar nhúng chưa bật — chấm toàn bộ bằng reranker "
+            "(chạy setup_embedding_sidecar.bat để bật tầng lọc nhanh).", None
+        )
+        return None, None
+
+    try:
+        on_progress("[*] Tầng lọc nhanh: đang nhúng kho cảnh quay bằng Qwen3-VL-Embedding...", None)
+        candidate_vectors = embedding_client.embed_candidates(candidates, STORAGE_DIR, on_progress)
+        scene_vectors = embedding_client.embed_scenes(scenes)
+        cos = embedding_client.cosine_matrix(scene_vectors, candidate_vectors)
+        picks = embedding_client.shortlist(cos, CASCADE_TOP_K)
+        # Kho nho hon top-K thi chang rut duoc gi; noi dung so thuc te thay vi hua hen 8.
+        kept = len(picks[0]) if picks else 0
+        on_progress(
+            f"[*] Đã rút {len(candidates)} cảnh quay xuống {kept} ứng viên/cảnh kịch bản."
+            if kept < len(candidates)
+            else f"[*] Kho chỉ có {len(candidates)} cảnh quay nên giữ nguyên, không rút bớt.",
+            None,
+        )
+        # Nha VRAM ngay: ngay sau day reranker 4B se can gan 8GB.
+        embedding_client.unload()
+        return picks, cos
+    except Exception as exc:  # noqa: BLE001 - tang loc nhanh hong thi van phai chay tiep
+        on_progress(f"[!] Tầng lọc nhanh lỗi ({type(exc).__name__}: {exc}) — chấm toàn bộ bằng reranker.", None)
+        return None, None
+
+
+def _run_match_job(job, on_progress):
+    """Khop kich ban voi kho canh quay da phan tich, roi luu ke hoach dung ra file."""
+    global matcher
+    candidates = script_matcher.collect_candidates(
+        STORAGE_DIR, granularity=job.payload.get("granularity", "segment")
+    )
+    scenes = script_matcher.split_script(job.payload["script"])
+
+    # Don sach GPU TRUOC khi goi sidecar. Do duoc: neu de Qwen2.5-VL (7GB) nam lai trong
+    # luc sidecar nap model nhung (5GB) thi dinh VRAM cham 15.4/16.4GB - sat nguong tran.
+    with analyzer_lock:
+        _free_analyzer(on_progress)
+
+    # Loc nhanh TRUOC khi nap reranker: hai mo hinh khong nen cung nam tren GPU.
+    shortlist, cos = (None, None)
+    if scenes and candidates:
+        shortlist, cos = _shortlist_with_embeddings(
+            scenes, candidates, on_progress, force=job.payload.get("force_cascade", False)
+        )
+
+    with analyzer_lock:
+        if matcher is None:
+            matcher = script_matcher.ScriptMatcher()
+        matcher.progress_callback = on_progress
+        if matcher.model is None:
+            app_status.set_model_state("reranker", "dang_nap")
+            with app_status.DownloadWatcher(matcher.model_id, on_progress):
+                matcher.load()
+            app_status.set_model_state("reranker", "san_sang")
+
+    result = matcher.match_script(
+        job.payload["script"],
+        candidates,
+        instruction=job.payload.get("instruction") or script_matcher.DEFAULT_INSTRUCTION,
+        reuse=job.payload.get("reuse", "segment"),
+        top_k=job.payload.get("top_k", 3),
+        shortlist=shortlist,
+        fallback_scores=cos,
+    )
+
+    _save_plan(job, result)
+    job.result = result
+    job.percent = 100.0
+    job.status = "done"
+
+
+def _save_plan(job, result):
+    """Ghi ke hoach dung ra dia (.json + .md), dung chung cho ca hai duong ong khop kich ban."""
+    plan_id = f"plan_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{job.id[:6]}"
+    result["plan_id"] = plan_id
+    result["script"] = job.payload["script"]
+    with open(os.path.join(PLANS_DIR, f"{plan_id}.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(PLANS_DIR, f"{plan_id}.md"), "w", encoding="utf-8") as f:
+        f.write(script_matcher.plan_to_markdown(result))
+
+
+def _run_embedding_only_match_job(job, on_progress):
+    """Che do "Chi Embedding": bo qua HOAN TOAN Qwen2.5-VL va Qwen3-Reranker.
+
+    Qwen3-VL-Embedding nhung THANG anh/video tho trong media_input/ (khong can mo ta
+    bang chu), xep canh bang do tuong dong cosine giua cau kich ban va vector do. Day la
+    retrieve thuan tuy, KHONG co buoc "doc ca hai ve cung luc" cua reranker, nen do chinh
+    xac tung cap thap hon (xem KHOP_KICH_BAN.md) - danh doi lay toc do va bo qua duoc
+    hoan toan buoc phan tich thu cong o tab 1.
+    """
+    scenes = script_matcher.split_script(job.payload["script"])
+    if not scenes:
+        raise ValueError("Kịch bản trống. Hãy nhập ít nhất một dòng.")
+
+    on_progress("[*] Đang chuẩn bị các đoạn video (cắt lần đầu, các lần sau lấy từ cache)...", 5)
+    candidates = script_matcher.collect_raw_candidates(
+        MEDIA_DIR, IMAGE_EXTS, VIDEO_EXTS, segments_dir=RAW_SEGMENTS_DIR
+    )
+    if not candidates:
+        raise ValueError("Chưa có ảnh/video nào trong media_input/.")
+
+    if embedding_client.health() is None:
+        raise RuntimeError(
+            "Chế độ Chỉ-Embedding bắt buộc phải có sidecar đang chạy "
+            "(chạy start_embedding_sidecar.bat trước)."
+        )
+
+    # Giai phong Qwen2.5-VL/Reranker: khong dung den trong che do nay, nhung neu con nam
+    # tren GPU thi khong con cho cho model nhung (16GB khong ganh noi ca hai).
+    with analyzer_lock:
+        _free_analyzer(on_progress)
+        _free_matcher(on_progress)
+
+    on_progress(f"[*] Đang nhúng {len(candidates)} ảnh/video thô từ media_input...", 10)
+    candidate_vectors = embedding_client.embed_raw_candidates(candidates, STORAGE_DIR, on_progress)
+    on_progress("[*] Đang nhúng từng dòng kịch bản...", 70)
+    scene_vectors = embedding_client.embed_scenes(scenes)
+    cos = embedding_client.cosine_matrix(scene_vectors, candidate_vectors)
+
+    on_progress("[*] Đang xếp cảnh theo độ tương đồng cosine...", 90)
+    plan = script_matcher.assign(
+        cos, scenes, candidates,
+        reuse=job.payload.get("reuse", "segment"),
+        top_k=job.payload.get("top_k", 3),
+    )
+    result = script_matcher.build_result(
+        "Qwen3-VL-Embedding (chỉ cosine — KHÔNG dùng Reranker)",
+        scenes, candidates, plan, instruction=None, reuse=job.payload.get("reuse", "segment"),
+    )
+    embedding_client.unload()
+
+    _save_plan(job, result)
+    on_progress("[*] Đã xếp xong kịch bản.", 100)
+    job.result = result
+    job.percent = 100.0
+    job.status = "done"
+
+
 def _worker():
     """Luồng nền xử lý job tuần tự."""
     global analyzer
@@ -180,14 +401,28 @@ def _worker():
                 if percent is not None:
                     job.percent = percent
 
+            # Nhanh khop kich ban. Loi (neu co) roi xuong khoi except chung ben duoi,
+            # va khoi finally van dong job dung mot lan nho continue di qua finally.
+            if job.kind == "match":
+                if job.payload.get("mode") == "embedding_only":
+                    _run_embedding_only_match_job(job, on_progress)
+                else:
+                    _run_match_job(job, on_progress)
+                continue
+
             with analyzer_lock:
+                _free_matcher(on_progress)
                 if analyzer is None:
-                    job.messages.append("[*] Lần chạy đầu tiên: đang nạp mô hình lên GPU (mất ~30 giây)...")
-                    analyzer = LocalVisionAnalyzer(
-                        model_id="Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
-                        storage_dir=STORAGE_DIR,
-                        progress_callback=on_progress,
-                    )
+                    vl_model_id = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
+                    app_status.set_model_state("vision", "dang_nap")
+                    # DownloadWatcher tu im lang neu trong so da co san trong cache.
+                    with app_status.DownloadWatcher(vl_model_id, on_progress):
+                        analyzer = LocalVisionAnalyzer(
+                            model_id=vl_model_id,
+                            storage_dir=STORAGE_DIR,
+                            progress_callback=on_progress,
+                        )
+                    app_status.set_model_state("vision", "san_sang")
                 analyzer.progress_callback = on_progress
 
             media_path = os.path.join(MEDIA_DIR, job.filename)
@@ -212,6 +447,8 @@ def _worker():
         finally:
             if analyzer is not None:
                 analyzer.progress_callback = None
+            if matcher is not None:
+                matcher.progress_callback = None
             job_queue.task_done()
 
 
@@ -316,7 +553,8 @@ def start_analyze(req: AnalyzeRequest):
     prompt = (req.prompt or "").strip() or (
         DEFAULT_IMAGE_PROMPT if media_type == "image" else DEFAULT_VIDEO_PROMPT
     )
-    job = Job(uuid.uuid4().hex[:12], name, media_type, prompt, fps=fps)
+    job = Job(uuid.uuid4().hex[:12], kind="analyze", filename=name, media_type=media_type,
+              prompt=prompt, fps=fps)
     with jobs_lock:
         jobs[job.id] = job
     job_queue.put(job.id)
@@ -348,6 +586,151 @@ def estimate(filename: str, fps: float = DEFAULT_FPS):
         "sampled_frames": int(duration * fps),
         "duration_sec": round(duration, 1),
         "estimated_seconds": seconds,
+    }
+
+
+# ==========================================
+# API KHỚP KỊCH BẢN
+# ==========================================
+@app.get("/api/script/candidates")
+def script_candidates(granularity: str = "segment", mode: str = "reranker"):
+    """Liệt kê kho ứng viên để khớp kịch bản.
+
+    mode=reranker (mac dinh): doc mo ta da phan tich trong vision_storage/.
+    mode=embedding_only: quet THANG media_input/, bo qua Qwen2.5-VL hoan toan."""
+    if mode not in ("reranker", "embedding_only"):
+        raise HTTPException(status_code=400, detail="mode phải là reranker hoặc embedding_only.")
+
+    if mode == "embedding_only":
+        # KHONG truyen segments_dir o day: liet ke chi de hien thi, khong duoc chan request
+        # GET nay hang cho toi khi cat xong het video. Viec cat that su chi xay ra trong job
+        # "Khop kich ban" (_run_embedding_only_match_job), noi da co thanh tien trinh rieng.
+        candidates = script_matcher.collect_raw_candidates(MEDIA_DIR, IMAGE_EXTS, VIDEO_EXTS)
+        return {
+            "mode": mode,
+            "granularity": None,
+            "count": len(candidates),
+            "reuse_choices": REUSE_CHOICES,
+            "default_instruction": None,
+            "model": "Qwen3-VL-Embedding (chỉ cosine)",
+            "sidecar": embedding_client.health(),
+            "cascade_min": None,
+            "cascade_top_k": None,
+            "candidates": [
+                {k: v for k, v in c.items() if k not in ("text", "media_path")} | {"preview": c["text"]}
+                for c in candidates
+            ],
+        }
+
+    if granularity not in ("segment", "file"):
+        raise HTTPException(status_code=400, detail="granularity phải là segment hoặc file.")
+    candidates = script_matcher.collect_candidates(STORAGE_DIR, granularity=granularity)
+    return {
+        "mode": mode,
+        "granularity": granularity,
+        "count": len(candidates),
+        "reuse_choices": REUSE_CHOICES,
+        "default_instruction": script_matcher.DEFAULT_INSTRUCTION,
+        "model": script_matcher.RERANKER_MODEL_ID,
+        # Tang loc nhanh la tuy chon: bao ro dang bat hay tat de nguoi dung khong phai doan.
+        "sidecar": embedding_client.health(),
+        "cascade_min": CASCADE_MIN_CANDIDATES,
+        "cascade_top_k": CASCADE_TOP_K,
+        "candidates": [
+            {k: v for k, v in c.items() if k != "text"} | {"preview": c["text"][:220]}
+            for c in candidates
+        ],
+    }
+
+
+class MatchRequest(BaseModel):
+    script: str
+    granularity: str = "segment"
+    reuse: str = "segment"
+    instruction: str | None = None
+    top_k: int = 3
+    force_cascade: bool = False   # chay tang loc nhanh ke ca khi kho chua du nguong
+    mode: str = "reranker"        # reranker (day du) | embedding_only (bo qua Qwen2.5-VL + Reranker)
+
+
+@app.post("/api/script/match")
+def start_match(req: MatchRequest):
+    if not (req.script or "").strip():
+        raise HTTPException(status_code=400, detail="Hãy nhập kịch bản trước.")
+    if req.mode not in ("reranker", "embedding_only"):
+        raise HTTPException(status_code=400, detail="mode phải là reranker hoặc embedding_only.")
+    if req.mode == "reranker" and req.granularity not in ("segment", "file"):
+        raise HTTPException(status_code=400, detail="granularity phải là segment hoặc file.")
+    if req.reuse not in {c["value"] for c in REUSE_CHOICES}:
+        raise HTTPException(status_code=400, detail="Chế độ tái sử dụng không hợp lệ.")
+    if not 1 <= req.top_k <= 10:
+        raise HTTPException(status_code=400, detail="top_k phải nằm trong khoảng 1 đến 10.")
+    if req.mode == "embedding_only" and embedding_client.health() is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Chế độ Chỉ-Embedding cần sidecar đang chạy. Hãy chạy start_embedding_sidecar.bat trước.",
+        )
+
+    job = Job(uuid.uuid4().hex[:12], kind="match", payload=req.model_dump())
+    with jobs_lock:
+        jobs[job.id] = job
+    job_queue.put(job.id)
+    return {"job_id": job.id, "queue_size": job_queue.qsize()}
+
+
+@app.get("/api/script/plans")
+def list_plans():
+    """Các kế hoạch dựng đã lưu, mới nhất lên đầu."""
+    names = sorted(
+        (n[:-5] for n in os.listdir(PLANS_DIR) if n.endswith(".json")),
+        reverse=True,
+    )
+    return {"plans": names}
+
+
+@app.get("/api/script/plan/{plan_id}")
+def get_plan(plan_id: str, fmt: str = "json"):
+    if fmt not in ("json", "md"):
+        raise HTTPException(status_code=400, detail="fmt phải là json hoặc md.")
+    name = os.path.basename(plan_id)
+    path = os.path.realpath(os.path.join(PLANS_DIR, f"{name}.{fmt}"))
+    if os.path.dirname(path) != os.path.realpath(PLANS_DIR) or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Không tìm thấy kế hoạch dựng này.")
+    if fmt == "json":
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    return FileResponse(path, filename=f"{name}.md", media_type="text/markdown")
+
+
+@app.get("/api/status")
+def system_status():
+    """Một chỗ duy nhất để giao diện biết toàn bộ hệ thống đang làm gì.
+
+    Gộp cả sidecar vào đây là có chủ đích: nhờ vậy người dùng không phải mở thêm cửa sổ
+    console nào để theo dõi tầng lọc nhanh.
+    """
+    with jobs_lock:
+        running = next(
+            (j for j in jobs.values() if j.status in ("running", "queued")), None
+        )
+    current = None
+    if running is not None:
+        current = {
+            "id": running.id,
+            "kind": running.kind,
+            "status": running.status,
+            "percent": round(running.percent, 1),
+            "filename": running.filename,
+            "last_message": running.messages[-1] if running.messages else None,
+        }
+
+    return {
+        "job": current,
+        "queue_size": job_queue.qsize(),
+        "models": app_status.get_models(),
+        "download": app_status.get_download(),
+        "vram": app_status.vram(),
+        "sidecar": embedding_client.health(),
     }
 
 

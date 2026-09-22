@@ -161,6 +161,67 @@
     font-size: 13px;
   }
   .estimate b { color: var(--accent); }
+  /* main co display:grid nen thuoc tinh [hidden] mot minh khong an duoc no. */
+  main[hidden] { display: none; }
+  .statusbar {
+    max-width: 1280px;
+    margin: 12px auto 0;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .statusbar .now { font-weight: 560; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .statusbar .now .dot { font-size: 11px; }
+  .statusbar .now .dot.busy { color: var(--accent); }
+  .statusbar .now .dot.idle { color: var(--muted); }
+  .statusbar .detail { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+  .chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 8px; }
+  .chip {
+    font-size: 12px; padding: 2px 9px; border-radius: 99px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+  }
+  .chip b { font-weight: 600; color: var(--text); }
+  .chip.san_sang { border-color: var(--ok); color: var(--ok); }
+  .chip.dang_nap, .chip.dang_tai, .chip.dang_nhung { border-color: var(--accent); color: var(--accent); }
+  .chip.canhbao { border-color: var(--err); color: var(--err); }
+  .minibar { height: 5px; background: var(--code-bg); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+  .minibar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .shot {
+    display: grid;
+    grid-template-columns: 34px 132px 1fr;
+    gap: 12px;
+    padding: 11px 0;
+    border-top: 1px solid var(--border);
+    align-items: start;
+  }
+  .shot:first-child { border-top: 0; }
+  .shot .no { font-weight: 700; color: var(--muted); font-size: 18px; text-align: right; }
+  .shot img, .shot video { width: 132px; border-radius: 6px; border: 1px solid var(--border); display: block; }
+  .shot .noimg {
+    width: 132px; height: 74px; border-radius: 6px; border: 1px dashed var(--border);
+    display: grid; place-items: center; font-size: 12px; color: var(--muted);
+  }
+  .shot .line { font-weight: 560; }
+  .badge { padding: 1px 7px; border-radius: 99px; font-size: 12px; background: var(--code-bg); }
+  .badge.tot { background: #dcfce7; color: #14532d; }
+  .badge.tam { background: #fef3c7; color: #78350f; }
+  .badge.yeu, .badge.thieu_canh { background: #fee2e2; color: #7f1d1d; }
+  .badge.chua_cham { background: var(--code-bg); color: var(--muted); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .badge.tot { background: #14532d; color: #bbf7d0; }
+    :root:not([data-theme="light"]) .badge.tam { background: #78350f; color: #fde68a; }
+    :root:not([data-theme="light"]) .badge.yeu,
+    :root:not([data-theme="light"]) .badge.thieu_canh { background: #7f1d1d; color: #fecaca; }
+  }
+  .alts { font-size: 13px; color: var(--muted); margin-top: 5px; }
+  .alts li { margin: 2px 0; }
+  .banner {
+    padding: 10px 12px; border-radius: 8px; background: var(--accent-soft);
+    border: 1px solid var(--border); font-size: 13.5px; margin-bottom: 12px;
+  }
   .offline {
     background: var(--err);
     color: #fff;
@@ -181,10 +242,24 @@
     <div class="path" id="mediaDir">…</div>
     <div class="path">Đóng tab này sẽ tự tắt ứng dụng và giải phóng GPU.</div>
   </div>
-  <button id="rescan">Quét lại thư mục</button>
+  <div class="tabs">
+    <button id="tabBtnAnalyze" class="on">1 · Phân tích ảnh/video</button>
+    <button id="tabBtnScript">2 · Khớp kịch bản</button>
+    <button id="rescan">Quét lại thư mục</button>
+  </div>
 </header>
 
-<main>
+<div class="statusbar">
+  <div class="now">
+    <span class="dot idle" id="stDot">●</span>
+    <span id="stTask">Đang kết nối…</span>
+    <span class="detail" id="stDetail"></span>
+  </div>
+  <div class="minibar" id="stBarWrap" hidden><div id="stBar"></div></div>
+  <div class="chips" id="stChips"></div>
+</div>
+
+<main id="tabAnalyze">
   <section class="panel">
     <h2>Ảnh / Video tìm thấy</h2>
     <ul class="files" id="fileList"></ul>
@@ -231,6 +306,84 @@
         <summary>Xem phân tích gốc theo từng đoạn</summary>
         <div class="result" id="segments"></div>
       </details>
+    </div>
+  </section>
+</main>
+
+<main id="tabScript" hidden style="grid-template-columns: 340px 1fr;">
+  <section class="panel">
+    <h2>Kho ứng viên</h2>
+
+    <label for="matchMode">Chế độ khớp</label>
+    <select id="matchMode">
+      <option value="reranker">Reranker — đầy đủ, cần phân tích ở tab 1 trước</option>
+      <option value="embedding_only">Chỉ Embedding — bỏ qua Qwen2.5-VL, đọc thẳng media_input/</option>
+    </select>
+
+    <div class="banner" id="bannerReranker">
+      Bộ não khớp là <b id="rrModel">Qwen3-Reranker</b> — nó chỉ đọc <b>chữ</b>.
+      Mỗi cảnh quay phải được phân tích ở tab 1 trước thì mới có mô tả để đem ra so với kịch bản.
+      <div style="margin-top:6px" id="sidecarState">…</div>
+    </div>
+    <div class="banner" id="bannerEmbedding" hidden>
+      Chế độ này <b>bỏ qua Qwen2.5-VL và Reranker hoàn toàn</b>. Qwen3-VL-Embedding nhúng
+      thẳng từng ảnh/video trong <code>media_input/</code> thành vector, không cần mô tả
+      bằng chữ, rồi xếp cảnh bằng độ tương đồng cosine.
+      <br>Đổi lại: <b>độ chính xác từng cặp thấp hơn Reranker</b> (không có bước đọc
+      cả hai vế cùng lúc) — dùng để thử nhanh, không thay thế hẳn được chế độ đầy đủ.
+      <div style="margin-top:6px" id="embedSidecarState">…</div>
+    </div>
+
+    <div id="granularityWrap">
+      <label for="granularity">Độ mịn của cảnh quay</label>
+      <select id="granularity">
+        <option value="segment">Theo từng đoạn video (mịn hơn)</option>
+        <option value="file">Theo từng file (mỗi file một cảnh)</option>
+      </select>
+    </div>
+    <div class="hint" id="candCount">…</div>
+    <ul class="files" id="candList"></ul>
+  </section>
+
+  <section class="panel">
+    <h2>Kịch bản</h2>
+    <label for="script">Mỗi cảnh một dòng, hoặc đánh số (1. 2. 3.), hoặc cách nhau bằng dòng trống</label>
+    <textarea id="script" style="min-height:170px" placeholder="1. Cảnh mở đầu: bầu trời lúc bình minh, thành phố còn vắng&#10;2. Người phụ nữ bước nhanh trên vỉa hè, tay cầm cốc cà phê&#10;3. Cận cảnh bàn tay gõ bàn phím trong văn phòng"></textarea>
+
+    <div class="settings">
+      <label for="reuse">Cách dùng lại cảnh quay</label>
+      <select id="reuse"></select>
+      <div class="hint" id="reuseHint"></div>
+      <div id="rerankerOnlySettings">
+        <label style="display:flex;gap:7px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="forceCascade" style="margin-top:3px;width:auto">
+          <span>Ép dùng tầng lọc nhanh (bỏ qua ngưỡng <b id="fcMin">24</b> cảnh quay) —
+          <span id="fcHint">để chạy thử khi kho còn ít</span></span>
+        </label>
+        <label for="instruction">Tiêu chí khớp (gửi thẳng cho mô hình — sửa được)</label>
+        <textarea id="instruction" style="min-height:60px"></textarea>
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="primary" id="runMatch" disabled>Khớp kịch bản</button>
+      <span class="status" id="mStatus"></span>
+    </div>
+
+    <div id="mProgressWrap" hidden>
+      <div class="bar"><div id="mBarFill"></div></div>
+      <div class="log" id="mLog"></div>
+    </div>
+
+    <div id="planWrap" hidden>
+      <hr>
+      <h2>Kế hoạch dựng — đã sắp theo đúng thứ tự kịch bản</h2>
+      <div class="row" style="margin-top:0">
+        <button id="dlPlanMd">Tải kế hoạch .md</button>
+        <button id="dlPlanJson">Tải kế hoạch .json</button>
+        <span class="status" id="planMeta"></span>
+      </div>
+      <div id="storyboard"></div>
     </div>
   </section>
 </main>
@@ -448,6 +601,313 @@ async function run() {
     }
   }, 1000);
 }
+
+// ==========================================
+// THANH TRANG THAI - luon hien, chung cho ca hai tab
+// ==========================================
+// Muc dich: moi cau hoi "no dang lam gi the?" phai tra loi duoc ngay tren trang nay,
+// ke ca cau hoi ve sidecar dang chay o tien trinh khac. Khong ai phai mo console.
+const MODEL_STATE_LABEL = {
+  trong: 'không nạp',
+  dang_tai: 'đang tải trọng số',
+  dang_nap: 'đang nạp lên GPU',
+  dang_nhung: 'đang nhúng',
+  san_sang: 'sẵn sàng',
+};
+// Sidecar dung bo nhan rieng: voi no, "trong" nghia la tien trinh VAN dang chay, chi la
+// model chua len GPU (no nap tre, chi khi co viec nhung). Dung chung chu "khong nap" voi
+// hai model kia se doc nhu mau thuan voi dong "Tang loc nhanh dang bat" o ben duoi.
+const SIDECAR_STATE_LABEL = {
+  trong: 'đã bật · model chưa lên GPU',
+  dang_tai: 'đang tải trọng số',
+  dang_nap: 'đang nạp lên GPU',
+  dang_nhung: 'đang nhúng',
+  san_sang: 'đã bật · model trên GPU',
+};
+const TASK_LABEL = { analyze: 'Phân tích ảnh/video', match: 'Khớp kịch bản' };
+
+function chip(name, state, extra, labels) {
+  const label = (labels || MODEL_STATE_LABEL)[state] || state;
+  return `<span class="chip ${esc(state)}"><b>${esc(name)}</b> · ${esc(label)}${extra ? ' · ' + esc(extra) : ''}</span>`;
+}
+
+async function refreshStatus() {
+  let st;
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) return;
+    st = await r.json();
+  } catch (e) { return; }
+
+  const job = st.job;
+  const busy = !!job;
+  $('stDot').className = 'dot ' + (busy ? 'busy' : 'idle');
+
+  if (busy) {
+    const what = TASK_LABEL[job.kind] || job.kind;
+    $('stTask').textContent = job.status === 'queued'
+      ? `${what} — đang xếp hàng chờ`
+      : `${what}${job.filename ? ': ' + job.filename : ''} — ${job.percent}%`;
+    $('stDetail').textContent = job.last_message || '';
+    $('stBarWrap').hidden = false;
+    $('stBar').style.width = job.percent + '%';
+  } else if (st.download) {
+    // Tai trong so co the chay ngoai pham vi mot job (vi du sidecar tu nap).
+    const d = st.download;
+    $('stTask').textContent = `Đang tải trọng số ${d.model}`;
+    $('stDetail').textContent = d.total_mb ? `${d.downloaded_mb} / ${d.total_mb} MB` : `${d.downloaded_mb} MB`;
+    $('stBarWrap').hidden = d.percent === null;
+    $('stBar').style.width = (d.percent || 0) + '%';
+  } else {
+    $('stTask').textContent = 'Rảnh — sẵn sàng nhận việc';
+    $('stDetail').textContent = st.queue_size ? `${st.queue_size} việc đang chờ` : '';
+    $('stBarWrap').hidden = true;
+  }
+
+  const chips = [
+    chip('Qwen2.5-VL (thị giác)', st.models.vision),
+    chip('Qwen3-Reranker (khớp)', st.models.reranker),
+  ];
+  if (st.sidecar) {
+    chips.push(chip('Qwen3-VL-Embedding (lọc nhanh)', st.sidecar.state || 'trong',
+      st.sidecar.state === 'dang_nhung' && st.sidecar.total
+        ? `${st.sidecar.done}/${st.sidecar.total}` : '',
+      SIDECAR_STATE_LABEL));
+  } else {
+    chips.push('<span class="chip"><b>Qwen3-VL-Embedding (lọc nhanh)</b> · chưa bật sidecar</span>');
+  }
+  if (st.vram) {
+    // Tren 85% la vung nguy hiem: chi con cho cho KV cache, nap them mo hinh nua se tran.
+    const pct = Math.round(100 * st.vram.used_mb / st.vram.total_mb);
+    const warn = pct >= 85 ? ' canhbao' : '';
+    chips.push(`<span class="chip${warn}"><b>VRAM</b> · ${st.vram.used_mb} / ${st.vram.total_mb} MB (${pct}%)` +
+      `${warn ? ' — gần đầy' : ''}</span>`);
+  }
+  $('stChips').innerHTML = chips.join('');
+}
+
+setInterval(refreshStatus, 1500);
+refreshStatus();
+
+// ==========================================
+// TAB 2: KHOP KICH BAN
+// ==========================================
+let matchPoller = null;
+let scriptLoaded = false;
+
+function showTab(which) {
+  const isScript = which === 'script';
+  $('tabAnalyze').hidden = isScript;
+  $('tabScript').hidden = !isScript;
+  $('tabBtnAnalyze').className = isScript ? '' : 'on';
+  $('tabBtnScript').className = isScript ? 'on' : '';
+  if (isScript && !scriptLoaded) { scriptLoaded = true; loadCandidates(); }
+}
+
+function fmtWhen(m) {
+  if (m.start_sec === null || m.start_sec === undefined) return '';
+  return `giây ${Math.round(m.start_sec)} → ${Math.round(m.end_sec)}`;
+}
+
+function thumbHtml(m) {
+  if (!m) return '<div class="noimg">không có ảnh</div>';
+  if (m.raw) {
+    // Che do Chi-Embedding: khong co thu muc vision_storage, lay thang tu media_input/.
+    const url = '/api/media/' + encodeURIComponent(m.source_file);
+    return m.media_type === 'image'
+      ? `<img src="${url}" alt="">`
+      : `<video src="${url}" muted preload="metadata"></video>`;
+  }
+  if (!m.thumbnail) return '<div class="noimg">không có ảnh</div>';
+  return `<img src="/api/result-file/${encodeURIComponent(m.stem)}/${encodeURIComponent(m.thumbnail)}" alt="">`;
+}
+
+function applyMatchMode() {
+  const embed = $('matchMode').value === 'embedding_only';
+  $('bannerReranker').hidden = embed;
+  $('bannerEmbedding').hidden = !embed;
+  $('granularityWrap').hidden = embed;   // che do tho: moi file la mot ung vien, khong co doan
+  $('rerankerOnlySettings').hidden = embed;
+}
+
+async function loadCandidates() {
+  const mode = $('matchMode').value;
+  const g = $('granularity').value;
+  // Khoa nut trong luc nap: cac o chon do fetch dien vao, bam som la gui len gia tri rong.
+  $('runMatch').disabled = true;
+  $('candCount').textContent = 'Đang đọc kho ứng viên…';
+  const res = await fetch(`/api/script/candidates?granularity=${g}&mode=${mode}`);
+  if (!res.ok) { $('candCount').textContent = 'Không đọc được kho ứng viên.'; return; }
+  const data = await res.json();
+
+  $('rrModel').textContent = data.model;
+  if (!$('reuse').options.length) {
+    for (const c of data.reuse_choices) {
+      const opt = document.createElement('option');
+      opt.value = c.value; opt.textContent = c.label; opt.dataset.hint = c.hint;
+      $('reuse').appendChild(opt);
+    }
+    $('reuseHint').textContent = data.reuse_choices[0].hint;
+  }
+  if (data.default_instruction && !$('instruction').value) $('instruction').value = data.default_instruction;
+
+  if (mode === 'embedding_only') {
+    $('candCount').textContent = data.count
+      ? `${data.count} ảnh/video trong media_input/ sẵn sàng để khớp.`
+      : 'Chưa có ảnh/video nào trong media_input/.';
+    $('runMatch').disabled = data.count === 0;
+    $('embedSidecarState').innerHTML = data.sidecar
+      ? `✓ Sidecar đang chạy (${esc(data.sidecar.model)}) — sẵn sàng nhúng trực tiếp.`
+      : `✗ <b>Sidecar chưa bật</b> — chế độ này bắt buộc cần nó. ` +
+        `Chạy <code>start_embedding_sidecar.bat</code> trước rồi quay lại tab này.`;
+  } else {
+    $('fcMin').textContent = data.cascade_min;
+    // O nay chi co nghia khi sidecar dang chay; tat sidecar thi tich cung khong co gi de dung.
+    $('forceCascade').disabled = !data.sidecar;
+    $('fcHint').textContent = data.sidecar
+      ? 'để chạy thử khi kho còn ít'
+      : 'cần bật sidecar trước (start_embedding_sidecar.bat)';
+    $('candCount').textContent = data.count
+      ? `${data.count} cảnh quay sẵn sàng để khớp.`
+      : 'Chưa có cảnh quay nào. Hãy sang tab 1 phân tích ảnh/video trước.';
+    $('runMatch').disabled = data.count === 0;
+
+    // Tang loc nhanh la tuy chon - noi ro dang bat hay tat, va khi nao no moi duoc dung.
+    if (data.sidecar) {
+      // Bat != se duoc dung. Noi thang ket qua cho so canh quay HIEN TAI, vi nguoi dung
+      // hoi "sao no khong nap?" chinh la khi nguong chua dat ma giao dien chi khoe "dang bat".
+      const willUse = data.count >= data.cascade_min;
+      $('sidecarState').innerHTML = willUse
+        ? `⚡ <b>Tầng lọc nhanh sẽ chạy</b> (${esc(data.sidecar.model)}): ${data.count} cảnh quay ` +
+          `≥ ngưỡng ${data.cascade_min}, nó sẽ nhúng thẳng ảnh để rút xuống ${data.cascade_top_k} ứng viên mỗi cảnh ` +
+          `trước khi reranker chấm.`
+        : `○ <b>Tầng lọc nhanh đã bật nhưng lần khớp này không dùng đến</b> ` +
+          `(${esc(data.sidecar.model)}): chỉ có ${data.count} cảnh quay, cần từ ${data.cascade_min} trở lên. ` +
+          `Dưới ngưỡng đó, reranker chấm thẳng cả kho còn nhanh hơn là nạp thêm một mô hình nữa lên GPU — ` +
+          `nên model nhúng sẽ không được nạp.`;
+    } else {
+      $('sidecarState').innerHTML =
+        '○ Tầng lọc nhanh đang tắt — reranker sẽ chấm toàn bộ kho. ' +
+        'Bật bằng <code>start_embedding_sidecar.bat</code> nếu kho cảnh quay lớn.';
+    }
+  }
+
+  $('candList').innerHTML = data.candidates.map((c) => `
+    <li style="cursor:default">
+      <div class="fname">${esc(c.source_file)}</div>
+      <div class="meta">
+        <span class="tag">${c.media_type === 'image' ? 'Ảnh' : 'Video'}</span>
+        ${c.segment_index ? `<span>đoạn ${c.segment_index} · ${esc(fmtWhen(c))}</span>` : ''}
+      </div>
+      <div class="meta" style="color:var(--muted)">${esc(c.preview)}${mode === 'embedding_only' ? '' : '…'}</div>
+    </li>`).join('');
+}
+
+function renderPlan(r) {
+  $('planWrap').hidden = false;
+  $('planMeta').textContent =
+    `${r.num_scenes} cảnh kịch bản × ${r.num_candidates} cảnh quay`;
+
+  $('storyboard').innerHTML = r.plan.map((item) => {
+    const m = item.match;
+    const alts = (item.alternatives || []).map((a) =>
+      `<li>${esc(a.candidate.source_file)} ${esc(fmtWhen(a.candidate))} — ${a.score.toFixed(3)}</li>`).join('');
+    const body = m
+      ? `<div class="meta" style="margin-top:4px">
+           <span class="tag">${esc(m.source_file)}</span>
+           ${fmtWhen(m) ? `<span>${esc(fmtWhen(m))}</span>` : ''}
+           <span class="badge ${item.confidence}">khớp ${item.score.toFixed(3)} · ${item.confidence}</span>
+         </div>
+         <div class="alts">${esc(m.text.slice(0, 200))}…</div>`
+      : `<div class="meta" style="margin-top:4px">
+           <span class="badge thieu_canh">chưa có cảnh phù hợp — cần quay bổ sung</span>
+         </div>`;
+    return `<div class="shot">
+      <div class="no">${item.scene_index}</div>
+      <div>${thumbHtml(m)}</div>
+      <div>
+        <div class="line">${esc(item.scene_text)}</div>
+        ${body}
+        ${alts ? `<details><summary>Phương án thay thế</summary><ul class="alts">${alts}</ul></details>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const dl = (fmt) => () => window.location = `/api/script/plan/${encodeURIComponent(r.plan_id)}?fmt=${fmt}`;
+  $('dlPlanMd').onclick = dl('md');
+  $('dlPlanJson').onclick = dl('json');
+}
+
+async function runMatch() {
+  $('runMatch').disabled = true;
+  $('planWrap').hidden = true;
+  $('mProgressWrap').hidden = false;
+  $('mLog').textContent = '';
+  $('mBarFill').style.width = '0%';
+  $('mStatus').textContent = 'Đang xử lý…';
+  $('mStatus').className = 'status';
+
+  const res = await fetch('/api/script/match', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      script: $('script').value,
+      granularity: $('granularity').value,
+      reuse: $('reuse').value,
+      instruction: $('instruction').value,
+      top_k: 3,
+      force_cascade: $('forceCascade').checked,
+      mode: $('matchMode').value,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Lỗi không xác định' }));
+    $('mStatus').textContent = 'Lỗi: ' + err.detail;
+    $('mStatus').className = 'status err';
+    $('runMatch').disabled = false;
+    return;
+  }
+  const { job_id } = await res.json();
+
+  clearInterval(matchPoller);
+  matchPoller = setInterval(async () => {
+    const jobRes = await fetch('/api/jobs/' + job_id).catch(() => null);
+    if (!jobRes || !jobRes.ok) {
+      clearInterval(matchPoller);
+      $('mStatus').textContent = 'Mất liên lạc với tiến trình. Hãy bấm lại.';
+      $('mStatus').className = 'status err';
+      $('runMatch').disabled = false;
+      return;
+    }
+    const j = await jobRes.json();
+    $('mBarFill').style.width = j.percent + '%';
+    $('mLog').textContent = j.messages.join('\n');
+    $('mLog').scrollTop = $('mLog').scrollHeight;
+
+    if (j.status === 'done') {
+      clearInterval(matchPoller);
+      $('mStatus').textContent = 'Hoàn thành';
+      $('mStatus').className = 'status ok';
+      $('runMatch').disabled = false;
+      renderPlan(j.result);
+    } else if (j.status === 'error') {
+      clearInterval(matchPoller);
+      $('mStatus').textContent = 'Lỗi: ' + j.error;
+      $('mStatus').className = 'status err';
+      $('runMatch').disabled = false;
+    }
+  }, 1000);
+}
+
+$('tabBtnAnalyze').onclick = () => showTab('analyze');
+$('tabBtnScript').onclick = () => showTab('script');
+$('matchMode').onchange = () => { applyMatchMode(); loadCandidates(); };
+$('granularity').onchange = loadCandidates;
+$('reuse').onchange = () => {
+  const o = $('reuse').selectedOptions[0];
+  $('reuseHint').textContent = o ? o.dataset.hint : '';
+};
+$('runMatch').onclick = runMatch;
 
 // Kenh song/chet: server tu tat khi tab nay dong. Dung WebSocket thay vi heartbeat
 // vi trinh duyet bop timer cua tab chay nen, con WebSocket thi khong bi bop.
