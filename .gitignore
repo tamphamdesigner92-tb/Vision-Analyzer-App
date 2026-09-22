@@ -1,0 +1,26 @@
+# Môi trường ảo Python (nặng, cài lại bằng requirements.txt)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Anh/video nguoi dung dua vao de phan tich - khong phai code, co the rat nang
+media_input/*
+!media_input/.gitkeep
+
+# Ket qua phan tich + database lich su - sinh ra tu code, khong can luu tren git
+vision_storage/*
+!vision_storage/.gitkeep
+
+# Log va file tam sinh ra khi debug/test
+*.log
+bat_out.txt
+vram_samples.txt
+
+# Trang thai runtime cua Claude Code (khac voi launch.json la cau hinh du an nen giu lai)
+.claude/scheduled_tasks.lock
+
+# Rac he dieu hanh
+Thumbs.db
+.DS_Store

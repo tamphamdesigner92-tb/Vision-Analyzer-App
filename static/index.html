@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vision Analyzer</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1b1f24;
+    --muted: #666e7a;
+    --accent: #2563eb;
+    --accent-soft: #eaf1ff;
+    --ok: #15803d;
+    --err: #b91c1c;
+    --code-bg: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c;
+      --panel: #1b1f26;
+      --border: #2c323b;
+      --text: #e7eaee;
+      --muted: #9aa3b0;
+      --accent: #60a5fa;
+      --accent-soft: #1e293b;
+      --ok: #4ade80;
+      --err: #f87171;
+      --code-bg: #232831;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  header {
+    padding: 18px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { margin: 0; font-size: 19px; font-weight: 650; }
+  .path { color: var(--muted); font-size: 12.5px; word-break: break-all; margin-top: 3px; }
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 330px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  button {
+    font: inherit;
+    padding: 8px 14px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+  ul.files { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow-y: auto; }
+  ul.files li {
+    padding: 9px 10px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+    margin-bottom: 3px;
+  }
+  ul.files li:hover { background: var(--accent-soft); }
+  ul.files li.sel { background: var(--accent-soft); border-color: var(--accent); }
+  .fname { font-weight: 560; word-break: break-all; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { padding: 0 6px; border-radius: 4px; background: var(--code-bg); }
+  .tag.done { color: var(--ok); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 5px; }
+  textarea {
+    width: 100%;
+    min-height: 78px;
+    padding: 9px;
+    font: inherit;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    resize: vertical;
+  }
+  .preview { margin-top: 10px; }
+  .preview img, .preview video { max-width: 100%; max-height: 260px; border-radius: 8px; border: 1px solid var(--border); display: block; }
+  .row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  .bar { height: 9px; background: var(--code-bg); border-radius: 99px; overflow: hidden; margin: 6px 0; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .35s ease; }
+  .log {
+    background: var(--code-bg);
+    border-radius: 7px;
+    padding: 9px 11px;
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 12.5px;
+    max-height: 190px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .result { margin-top: 6px; }
+  .result h3 { font-size: 16px; margin: 16px 0 6px; }
+  .result h4 { font-size: 14.5px; margin: 13px 0 5px; }
+  .result p { margin: 7px 0; }
+  .result li { margin: 3px 0; }
+  .frames { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .frames img { height: 88px; border-radius: 6px; border: 1px solid var(--border); }
+  .empty { color: var(--muted); padding: 10px 0; }
+  .status { font-size: 13px; }
+  .status.err { color: var(--err); }
+  .status.ok { color: var(--ok); }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+  .settings {
+    margin-top: 14px;
+    padding: 12px 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .settings label { margin-top: 0; }
+  select {
+    width: 100%;
+    padding: 8px 9px;
+    font: inherit;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .estimate {
+    margin-top: 9px;
+    padding-top: 9px;
+    border-top: 1px dashed var(--border);
+    font-size: 13px;
+  }
+  .estimate b { color: var(--accent); }
+  .offline {
+    background: var(--err);
+    color: #fff;
+    padding: 11px 16px;
+    text-align: center;
+    font-weight: 560;
+  }
+</style>
+</head>
+<body>
+<div class="offline" id="offline" hidden>
+  Ứng dụng đã tắt. Đóng tab này rồi chạy lại <b>start_app.bat</b> để dùng tiếp.
+</div>
+
+<header>
+  <div>
+    <h1>Vision Analyzer</h1>
+    <div class="path" id="mediaDir">…</div>
+    <div class="path">Đóng tab này sẽ tự tắt ứng dụng và giải phóng GPU.</div>
+  </div>
+  <button id="rescan">Quét lại thư mục</button>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Ảnh / Video tìm thấy</h2>
+    <ul class="files" id="fileList"></ul>
+    <div class="empty" id="noFiles" hidden>
+      Chưa có file nào. Hãy copy ảnh/video vào thư mục <b>media_input/</b> rồi bấm "Quét lại thư mục".
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 id="selTitle">Chưa chọn file</h2>
+    <div class="preview" id="preview"></div>
+
+    <div class="settings" id="settings" hidden>
+      <label for="fps">Cài đặt lấy mẫu — FPS (số khung hình lấy mỗi giây)</label>
+      <select id="fps"></select>
+      <div class="hint" id="fpsHint"></div>
+      <div class="estimate" id="estimate">…</div>
+    </div>
+
+    <label for="prompt">Yêu cầu phân tích (prompt)</label>
+    <textarea id="prompt" placeholder="Chọn một file ở cột bên trái…"></textarea>
+
+    <div class="row">
+      <button class="primary" id="run" disabled>Phân tích</button>
+      <span class="status" id="status"></span>
+    </div>
+
+    <div id="progressWrap" hidden>
+      <div class="bar"><div id="barFill"></div></div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <div id="resultWrap" hidden>
+      <hr>
+      <h2>Kết quả</h2>
+      <div class="row" style="margin-top:0">
+        <button id="dlMd">Tải .md</button>
+        <button id="dlJson">Tải .json</button>
+        <button id="dlZip">Tải .zip (kèm ảnh)</button>
+      </div>
+      <div class="frames" id="frames"></div>
+      <div class="result" id="result"></div>
+      <details id="segWrap" hidden>
+        <summary>Xem phân tích gốc theo từng đoạn</summary>
+        <div class="result" id="segments"></div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<script>
+let files = [];
+let selected = null;
+let defaults = {};
+let poller = null;
+
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// Bộ render Markdown tối giản: tiêu đề, in đậm, danh sách gạch đầu dòng.
+function renderMd(text) {
+  const lines = esc(text).split('\n');
+  let html = '', inList = false;
+  for (let line of lines) {
+    line = line.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    const li = line.match(/^\s*[-*]\s+(.*)$/);
+    if (li) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${li[1]}</li>`;
+      continue;
+    }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (h) {
+      const lvl = Math.min(h[1].length + 2, 4);
+      html += `<h${lvl}>${h[2]}</h${lvl}>`;
+    } else if (line.trim() === '') {
+      html += '';
+    } else {
+      html += `<p>${line}</p>`;
+    }
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+
+function fillFpsChoices(choices, defaultFps) {
+  if ($('fps').options.length) return;  // chi dung mot lan
+  for (const c of choices) {
+    const opt = document.createElement('option');
+    opt.value = c.value;
+    opt.textContent = c.label;
+    opt.dataset.hint = c.hint;
+    if (c.value === defaultFps) opt.selected = true;
+    $('fps').appendChild(opt);
+  }
+}
+
+async function refreshEstimate() {
+  if (!selected || selected.media_type !== 'video') return;
+  const opt = $('fps').selectedOptions[0];
+  $('fpsHint').textContent = opt ? opt.dataset.hint : '';
+  $('estimate').textContent = 'Đang ước tính…';
+  try {
+    const r = await fetch(`/api/estimate?filename=${encodeURIComponent(selected.filename)}&fps=${$('fps').value}`);
+    const e = await r.json();
+    if (!e.applicable) { $('estimate').textContent = ''; return; }
+    const mins = Math.max(1, Math.round(e.estimated_seconds / 60));
+    $('estimate').innerHTML =
+      `Sẽ lấy <b>${e.sampled_frames}</b> khung hình, chia thành <b>${e.segments}</b> đoạn ` +
+      `(tối đa ${e.frames_per_chunk} khung/đoạn). Thời gian chạy ước tính <b>~${mins} phút</b>.`;
+  } catch (err) {
+    $('estimate').textContent = 'Không ước tính được.';
+  }
+}
+
+async function loadFiles() {
+  const res = await fetch('/api/files');
+  const data = await res.json();
+  files = data.files;
+  defaults = data.default_prompts;
+  fillFpsChoices(data.fps_choices, data.default_fps);
+  $('mediaDir').textContent = 'Thư mục đầu vào: ' + data.media_dir;
+  $('noFiles').hidden = files.length > 0;
+
+  const ul = $('fileList');
+  ul.innerHTML = '';
+  for (const f of files) {
+    const li = document.createElement('li');
+    if (selected && f.filename === selected.filename) li.className = 'sel';
+    const dur = f.duration_sec ? `${f.duration_sec}s` : '';
+    li.innerHTML = `<div class="fname">${esc(f.filename)}</div>
+      <div class="meta">
+        <span class="tag">${f.media_type === 'image' ? 'Ảnh' : 'Video'}</span>
+        <span>${f.size_mb} MB</span>
+        ${dur ? `<span>${dur}</span>` : ''}
+        ${f.has_result ? '<span class="tag done">đã có kết quả</span>' : ''}
+      </div>`;
+    li.onclick = () => selectFile(f);
+    ul.appendChild(li);
+  }
+}
+
+async function selectFile(f) {
+  selected = f;
+  $('selTitle').textContent = f.filename;
+  $('run').disabled = false;
+  $('status').textContent = '';
+  $('status').className = 'status';
+  $('prompt').value = defaults[f.media_type] || '';
+  $('progressWrap').hidden = true;
+  $('resultWrap').hidden = true;
+
+  const url = '/api/media/' + encodeURIComponent(f.filename);
+  $('preview').innerHTML = f.media_type === 'image'
+    ? `<img src="${url}" alt="">`
+    : `<video src="${url}" controls preload="metadata"></video>`;
+
+  // Cai dat lay mau chi co y nghia voi video
+  $('settings').hidden = f.media_type !== 'video';
+  refreshEstimate();
+
+  await loadFiles();
+  if (f.has_result) {
+    try {
+      const res = await fetch('/api/result/' + encodeURIComponent(f.stem));
+      if (res.ok) {
+        const saved = await res.json();
+        showResult({
+          text: saved.result,
+          stem: f.stem,
+          keyframes: (saved.images || []).filter((n) => /\.(jpg|jpeg|png)$/i.test(n)),
+          segments: saved.segments || [],
+        });
+        $('status').textContent = 'Đang xem kết quả đã lưu lúc ' + (saved.analyzed_at || '');
+      }
+    } catch (e) { /* bỏ qua, chỉ là xem lại kết quả cũ */ }
+  }
+}
+
+function showResult(r) {
+  $('resultWrap').hidden = false;
+  $('result').innerHTML = renderMd(r.text || '');
+  $('frames').innerHTML = (r.keyframes || [])
+    .map((n) => `<img src="/api/result-file/${encodeURIComponent(r.stem)}/${encodeURIComponent(n)}" alt="">`)
+    .join('');
+
+  const segs = r.segments || [];
+  $('segWrap').hidden = segs.length === 0;
+  $('segments').innerHTML = segs
+    .map((s) => `<h4>Đoạn ${s.index}: giây ${Math.round(s.start_sec)} → ${Math.round(s.end_sec)}</h4>` + renderMd(s.text))
+    .join('');
+
+  const dl = (fmt) => () => window.location = `/api/download/${encodeURIComponent(r.stem)}?fmt=${fmt}`;
+  $('dlMd').onclick = dl('md');
+  $('dlJson').onclick = dl('json');
+  $('dlZip').onclick = dl('zip');
+}
+
+async function run() {
+  if (!selected) return;
+  $('run').disabled = true;
+  $('resultWrap').hidden = true;
+  $('progressWrap').hidden = false;
+  $('log').textContent = '';
+  $('barFill').style.width = '0%';
+  $('status').textContent = 'Đang xử lý…';
+  $('status').className = 'status';
+
+  const res = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename: selected.filename,
+      prompt: $('prompt').value,
+      fps: parseFloat($('fps').value),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Lỗi không xác định' }));
+    $('status').textContent = 'Lỗi: ' + err.detail;
+    $('status').className = 'status err';
+    $('run').disabled = false;
+    return;
+  }
+  const { job_id } = await res.json();
+
+  clearInterval(poller);
+  poller = setInterval(async () => {
+    const jobRes = await fetch('/api/jobs/' + job_id).catch(() => null);
+    if (!jobRes || !jobRes.ok) {
+      // Job biến mất (thường do server khởi động lại) — dừng poll thay vì lặp vô hạn.
+      clearInterval(poller);
+      $('status').textContent = 'Mất liên lạc với tiến trình. Server có thể đã khởi động lại — hãy bấm Phân tích lại.';
+      $('status').className = 'status err';
+      $('run').disabled = false;
+      return;
+    }
+    const j = await jobRes.json();
+    $('barFill').style.width = j.percent + '%';
+    $('log').textContent = j.messages.join('\n');
+    $('log').scrollTop = $('log').scrollHeight;
+
+    if (j.status === 'done') {
+      clearInterval(poller);
+      $('status').textContent = 'Hoàn thành' + (j.result.num_segments > 1 ? ` (${j.result.num_segments} đoạn)` : '');
+      $('status').className = 'status ok';
+      $('run').disabled = false;
+      showResult(j.result);
+      loadFiles();
+    } else if (j.status === 'error') {
+      clearInterval(poller);
+      $('status').textContent = 'Lỗi: ' + j.error;
+      $('status').className = 'status err';
+      $('run').disabled = false;
+    }
+  }, 1000);
+}
+
+// Kenh song/chet: server tu tat khi tab nay dong. Dung WebSocket thay vi heartbeat
+// vi trinh duyet bop timer cua tab chay nen, con WebSocket thi khong bi bop.
+let liveSocket = null;
+let liveRetries = 0;
+
+function connectLiveness() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  liveSocket = new WebSocket(`${proto}://${location.host}/ws`);
+  liveSocket.onopen = () => { liveRetries = 0; $('offline').hidden = true; };
+  liveSocket.onclose = () => {
+    liveRetries++;
+    if (liveRetries > 4) $('offline').hidden = false;
+    setTimeout(connectLiveness, 1000);
+  };
+}
+
+$('fps').onchange = refreshEstimate;
+$('run').onclick = run;
+$('rescan').onclick = loadFiles;
+connectLiveness();
+loadFiles();
+</script>
+</body>
+</html>

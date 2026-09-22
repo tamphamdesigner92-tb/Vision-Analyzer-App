@@ -1,0 +1,39 @@
+# Vision Analyzer - bo phien ban da kiem chung tren Windows 11 + RTX 4070 Ti SUPER (16GB)
+#
+# CANH BAO: bo phien ban nay rat kho thay the. AutoAWQ da ngung phat trien va chi
+# tuong thich voi torch 2.6.0 / transformers 4.51.3 tro xuong; transformers >= 4.52
+# hoac torch >= 2.6 se lam vo nhanh AWQ. Chi doi phien ban khi thuc su can.
+#
+# CACH CAI LAI TU DAU (chay lan luot, dung thu tu):
+#
+#   python -m venv .venv
+#   .venv\Scripts\python.exe -m pip install --upgrade pip wheel
+#   .venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#   .venv\Scripts\python.exe -m pip install autoawq==0.2.9 --no-deps --no-build-isolation
+#   .venv\Scripts\python.exe -m pip install autoawq-kernels==0.0.9
+#
+# Luu y:
+#   - torch/torchvision phai lay tu index cu121; ban CPU tren PyPI se khong dung duoc GPU.
+#   - autoawq PHAI cai voi --no-deps, neu khong pip se ha torch xuong ban CPU 2.3.1.
+#   - autoawq-kernels chi nap duoc khi torch da duoc import truoc (torch >= 2.5.1).
+#   - numpy phai < 2 de tuong thich voi torch 2.5.1 va opencv 4.10.
+
+# --- Mo hinh & suy luan ---
+transformers==4.51.3
+tokenizers==0.21.4
+accelerate==1.15.0
+huggingface_hub==0.36.2
+safetensors==0.8.0
+qwen-vl-utils==0.0.14
+
+# --- Xu ly anh / video ---
+numpy==1.26.4
+opencv-python==4.10.0.84
+pillow==12.3.0
+av==18.1.0
+
+# --- Giao dien web ---
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5
