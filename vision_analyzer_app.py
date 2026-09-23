@@ -4,6 +4,7 @@ import time
 import shutil
 import sqlite3
 import datetime
+import difflib
 import uuid
 import json
 import re
@@ -283,6 +284,89 @@ def sample_video_frames(video_path, fps, start=None, end=None):
     return frames
 
 
+def timeline_instruction(start, end):
+    """Ràng buộc mốc thời gian gắn vào cuối mọi prompt video.
+
+    Không có nó, model không biết video dài bao lâu và hay ghi mốc kiểu "0:00 - 1:00"
+    (đọc thành phút), rồi cứ thế đếm tiếp tới hàng chục "phút" cho một video vài giây.
+    Ghi thẳng bằng GIÂY, nêu rõ mốc đầu/cuối và bắt buộc các khoảng nối liền nhau thì hết
+    nhập nhằng. Những giây liền nhau không có gì thay đổi được gộp thành một dòng."""
+    first, last = int(start), max(int(start) + 1, int(round(end)))
+    return (
+        f"\n\nQUY ĐỊNH VỀ MỐC THỜI GIAN (bắt buộc):\n"
+        f"- Đoạn video này kéo dài từ giây {first} đến giây {last} ({last - first} giây).\n"
+        f"- Chia diễn biến thành các khoảng giây nối liền nhau, mỗi khoảng một dòng, đúng định dạng:\n"
+        f"  - Giây a–b: <mô tả>\n"
+        f"- Chỉ mở dòng mới khi có thay đổi (hành động, đối tượng xuất hiện/biến mất, góc máy). "
+        f"Nhiều giây liên tiếp không có gì thay đổi thì GỘP thành MỘT dòng, ví dụ \"Giây 1–10: ...\"; "
+        f"không viết lại cùng một nội dung cho từng giây.\n"
+        f"- Dòng đầu bắt đầu từ giây {first}, dòng cuối kết thúc ở giây {last}; khoảng sau bắt đầu "
+        f"đúng chỗ khoảng trước kết thúc, không bỏ trống giây nào. Không ghi mốc nào vượt quá "
+        f"giây {last}, không dùng định dạng phút:giây."
+    )
+
+
+# Dòng mốc đúng định dạng timeline_instruction yêu cầu: "- Giây 3–7: mô tả"
+_RANGE_LINE = re.compile(r"^\s*[-*•]?\s*Giây\s*(\d+)\s*[–-]\s*(\d+)\s*:\s*(.*)$", re.IGNORECASE)
+# Câu model hay dùng khi một giây chẳng có gì mới so với giây trước.
+_NO_CHANGE = re.compile(r"không (?:có )?(?:sự )?thay đổi|giữ nguyên|như (?:cũ|trước)|tương tự", re.IGNORECASE)
+_FILLER = re.compile(r"\b(?:vẫn|tiếp tục|còn|đang|lại)\b", re.IGNORECASE)
+
+
+def _same_scene(a, b):
+    norm = lambda s: " ".join(_FILLER.sub(" ", re.sub(r"[^\w\s]", " ", s.lower())).split())
+    return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio() >= 0.85
+
+
+def merge_timeline(text):
+    """Lưới an toàn thứ hai: gộp các dòng liền nhau mà nội dung không đổi.
+
+    Model vẫn có lúc viết từng giây một dù đã được dặn gộp, chỉ đổi chữ "vẫn"/"tiếp tục"
+    ("Tòa nhà vẫn giữ nguyên..." rồi "Tòa nhà tiếp tục giữ nguyên..."). Dòng nối tiếp
+    (bắt đầu đúng chỗ dòng trước kết thúc) mà gần như trùng câu, hoặc chỉ báo "không thay
+    đổi", được nhập vào dòng trước và giữ mô tả của dòng trước."""
+    out = []   # phần tử: [start, end, desc] cho dòng mốc, hoặc chuỗi cho dòng thường
+    for line in text.splitlines():
+        m = _RANGE_LINE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        start, end, desc = int(m.group(1)), int(m.group(2)), m.group(3).strip()
+        prev = out[-1] if out and isinstance(out[-1], list) else None
+        if prev and prev[1] == start and (_NO_CHANGE.search(desc) or _same_scene(prev[2], desc)):
+            prev[1] = end
+            if _NO_CHANGE.search(prev[2]) and not _NO_CHANGE.search(desc):
+                prev[2] = desc
+            continue
+        out.append([start, end, desc])
+    return "\n".join(
+        f"- Giây {x[0]}–{x[1]}: {x[2]}" if isinstance(x, list) else x for x in out
+    )
+
+
+# Dòng mở đầu bằng một mốc thời gian: "- Giây 7–8: ...", "* 9:00 - 10:00: ...", "12s-13s: ..."
+_TIMELINE_LINE = re.compile(
+    r"^\s*[-*•]?\s*(?:Giây\s*)?(\d+)(?::(\d{2}))?\s*(?:s|giây)?\s*[–-]", re.IGNORECASE
+)
+
+
+def clamp_timeline(text, duration):
+    """Lưới an toàn: bỏ những dòng mốc thời gian bắt đầu từ sau khi video đã hết.
+
+    Chỉ đụng tới dòng mở đầu bằng một mốc thời gian; đoạn văn tự do giữ nguyên."""
+    if not duration:
+        return text
+    kept = []
+    for line in text.splitlines():
+        m = _TIMELINE_LINE.match(line)
+        if m:
+            seconds = int(m.group(1)) * 60 + int(m.group(2)) if m.group(2) else int(m.group(1))
+            if seconds >= duration:
+                continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
 def plan_video_chunks(video_path, fps, chunk_seconds=DEFAULT_MAX_VIDEO_CHUNK_SECONDS):
     """Chia video thành các đoạn đủ ngắn để không giữ quá nhiều khung hình trong một lượt.
 
@@ -452,7 +536,8 @@ class LocalVisionAnalyzer:
 
         with torch.no_grad():
             generated_ids = self.model.generate(
-                **inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False, streamer=streamer
+                **inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False, streamer=streamer,
+                repetition_penalty=1.05,
             )
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -517,6 +602,7 @@ class LocalVisionAnalyzer:
             f"{total_duration:.0f} giây. Nối liền diễn biến giữa các đoạn, loại bỏ phần trùng lặp và "
             f"tuyệt đối không bịa thêm chi tiết không có trong các bản phân tích trên."
             f"\n\nYêu cầu ban đầu: {prompt}"
+            f"{timeline_instruction(0, total_duration)}"
         )
         messages = [{"role": "user", "content": [{"type": "text", "text": synthesis_prompt}]}]
         return self._generate(messages, progress=progress)
@@ -665,9 +751,11 @@ class LocalVisionAnalyzer:
         chunks, frames_per_chunk = self._plan_video_chunks(video_path, fps)
         segment_reports = []
 
+        duration = video_duration(video_path)
         if len(chunks) == 1:
             self._report(f"[*] Đang phân tích video: {os.path.basename(video_path)} (FPS lấy mẫu: {fps})...", 20)
-            result = self._analyze_video_segment(video_path, prompt, fps, max_pixels,
+            result = self._analyze_video_segment(video_path, prompt + timeline_instruction(0, duration),
+                                                 fps, max_pixels,
                                                  progress=(20, 88))
         else:
             self._report(
@@ -685,6 +773,7 @@ class LocalVisionAnalyzer:
                     f"Đây là đoạn từ giây {start:.0f} đến giây {end:.0f} của một video dài hơn. "
                     f"Hãy mô tả diễn biến trong đoạn này và ghi mốc thời gian theo thời gian thật của "
                     f"toàn bộ video (tức cộng thêm {start:.0f} giây).\n\nYêu cầu: {prompt}"
+                    f"{timeline_instruction(start, end)}"
                 )
                 seg_lo = 15 + (i - 1) * 65 / len(chunks)
                 seg_hi = 15 + i * 65 / len(chunks)
@@ -696,6 +785,7 @@ class LocalVisionAnalyzer:
 
             self._report(f"[*] Đang tổng hợp {len(segment_reports)} đoạn thành báo cáo cuối...", 80)
             result = self._synthesize_timeline(segment_reports, prompt, progress=(80, 90))
+        result = merge_timeline(clamp_timeline(result, duration))
 
         # 3. Lưu vào Database, file Markdown và JSON
         self._report("[*] Đang lưu kết quả...", 92)

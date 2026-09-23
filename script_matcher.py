@@ -51,7 +51,9 @@ LOW_SCORE = 0.30           # dưới ngưỡng này coi như "chưa có cảnh p
 # ==========================================
 # TÁCH KỊCH BẢN
 # ==========================================
-MARKER_RE = re.compile(r"^\s*(?:cảnh|canh|scene|shot|c)?\s*\d+\s*[\.\):\-]\s+", re.I)
+# Dấu phẩy nằm trong tập dấu vì gõ nhầm "2," thay cho "2." rất hay gặp; thiếu nó thì dòng
+# đó không được nhận là cảnh mới và bị gộp lặng lẽ vào cảnh phía trên.
+MARKER_RE = re.compile(r"^\s*(?:cảnh|canh|scene|shot|c)?\s*\d+\s*[\.\):\-,–]\s+", re.I)
 
 
 def split_script(text):
