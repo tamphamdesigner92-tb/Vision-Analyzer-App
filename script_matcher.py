@@ -13,11 +13,9 @@ Cách reranker chấm điểm: nó là một causal LM được huấn luyện �
 """
 
 import json
-import math
 import os
 import re
 
-import cv2
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -48,7 +46,9 @@ LOW_SCORE = 0.30           # dưới ngưỡng này coi như "chưa có cảnh p
 # ==========================================
 # TÁCH KỊCH BẢN
 # ==========================================
-MARKER_RE = re.compile(r"^\s*(?:cảnh|canh|scene|shot|c)?\s*\d+\s*[\.\):\-]\s+", re.I)
+# Dấu phẩy nằm trong tập dấu vì gõ nhầm "2," thay cho "2." rất hay gặp; thiếu nó thì dòng
+# đó không được nhận là cảnh mới và bị gộp lặng lẽ vào cảnh phía trên.
+MARKER_RE = re.compile(r"^\s*(?:cảnh|canh|scene|shot|c)?\s*\d+\s*[\.\):\-,–]\s+", re.I)
 
 
 def split_script(text):
@@ -161,135 +161,8 @@ def collect_candidates(storage_dir, granularity="segment"):
     return [c for c in candidates if c["text"]]
 
 
-RAW_TEXT_PLACEHOLDER = (
-    "(chế độ Chỉ-Embedding — không có mô tả bằng chữ, khớp trực tiếp bằng vector hình ảnh/video)"
-)
-
-# Do dai moi doan khi cat video tho cho che do Chi-Embedding. Hai ly do bat buoc phai cat,
-# khong nhung thang ca file:
-#   1. Bo nhung (Qwen3VLEmbedder) doc TOAN BO video vao RAM truoc khi lay mau khung hinh -
-#      mot video vai chuc MB co the giai ma ra hang GB tensor tho, de OOM voi video thuc te dai.
-#   2. Neu MOT video trong ca batch loi, code cua vendor (_preprocess_inputs) sap toan bo
-#      batch do ve mot muc "NULL" gia thay vi bo qua rieng video loi - video cang dai cang
-#      de cham loi (thoi gian doc lau hon), keo ca nhung item khac trong batch mat vector.
-# Cat thanh doan ngan giam ca hai rui ro, va lam co so ranh gioi doan giong het pipeline
-# Qwen2.5-VL (vision_analyzer_app.py), du o day dung do dai co dinh thay vi tinh theo VRAM.
-RAW_VIDEO_SEGMENT_SECONDS = 20
-
-
-def _video_duration(path):
-    """Do dai video theo giay; tra ve 0.0 neu khong doc duoc metadata."""
-    cap = cv2.VideoCapture(path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-    if fps > 0 and frames > 0:
-        return frames / fps
-    return 0.0
-
-
-def _cut_video_segment(src_path, start_sec, end_sec, out_path):
-    """Cat mot doan [start_sec, end_sec) tu src_path ra out_path.
-
-    Doc tuan tu tung frame trong dung khoang can, KHONG doc ca video vao bo nho - day la
-    diem mau chot giai quyet rui ro OOM da neu o RAW_VIDEO_SEGMENT_SECONDS."""
-    cap = cv2.VideoCapture(src_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    start_frame = int(start_sec * fps)
-    end_frame = int(end_sec * fps)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-    out_dir = os.path.dirname(out_path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    try:
-        idx = start_frame
-        while idx < end_frame:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            writer.write(frame)
-            idx += 1
-    finally:
-        writer.release()
-        cap.release()
-    return out_path
-
-
-def collect_raw_candidates(media_dir, image_exts, video_exts, segments_dir=None,
-                           segment_seconds=RAW_VIDEO_SEGMENT_SECONDS):
-    """Quét THẲNG media_input/ (không qua vision_storage) — dùng cho chế độ "Chỉ Embedding".
-
-    Bỏ qua hoàn toàn bước Qwen2.5-VL: không có mô tả bằng chữ nào cho bất kỳ ứng viên nào.
-    Ảnh là một ứng viên duy nhất. Video được CẮT thành các đoạn segment_seconds giây (xem lý
-    do ở RAW_VIDEO_SEGMENT_SECONDS) — mỗi đoạn là một file .mp4 con riêng, cache lại trong
-    segments_dir để lần sau không phải cắt lại. Nếu segments_dir=None (chỉ dùng khi test),
-    dùng thẳng cả file gốc — không khuyến khích cho video thật.
-    """
-    candidates = []
-    if not os.path.isdir(media_dir):
-        return candidates
-
-    for name in sorted(os.listdir(media_dir)):
-        path = os.path.join(media_dir, name)
-        if not os.path.isfile(path):
-            continue
-        ext = os.path.splitext(name)[1].lower()
-
-        if ext in image_exts:
-            candidates.append({
-                "id": name,
-                "stem": None,
-                "media_type": "image",
-                "source_file": name,
-                "segment_index": None,
-                "start_sec": None,
-                "end_sec": None,
-                "text": RAW_TEXT_PLACEHOLDER,
-                "thumbnail": None,
-                "media_path": path,
-                "raw": True,
-            })
-        elif ext in video_exts:
-            duration = _video_duration(path)
-            if duration <= 0:
-                continue
-            n_segments = max(1, math.ceil(duration / segment_seconds))
-            safe_stem = re.sub(r"[^\w\-. ]", "_", os.path.splitext(name)[0]).strip() or "khong_ten"
-
-            for i in range(n_segments):
-                start = i * segment_seconds
-                end = min(start + segment_seconds, duration)
-                media_path = path
-                if segments_dir:
-                    seg_path = os.path.join(segments_dir, safe_stem, f"seg_{i + 1:03d}.mp4")
-                    if not os.path.isfile(seg_path):
-                        _cut_video_segment(path, start, end, seg_path)
-                    media_path = seg_path
-                candidates.append({
-                    "id": f"{name}#seg{i + 1}",
-                    "stem": None,
-                    "media_type": "video",
-                    "source_file": name,
-                    "segment_index": i + 1 if n_segments > 1 else None,
-                    "start_sec": start,
-                    "end_sec": end,
-                    "text": RAW_TEXT_PLACEHOLDER,
-                    "thumbnail": None,
-                    "media_path": media_path,
-                    "raw": True,
-                })
-    return candidates
-
-
 def build_result(model_name, scenes, candidates, plan, instruction=None, reuse="segment", shortlisted=None):
-    """Đóng gói kết quả xếp cảnh theo đúng khuôn mà plan_to_markdown() và giao diện mong đợi.
-
-    Tách riêng để cả đường ống Reranker (match_script) lẫn đường ống Chỉ-Embedding
-    (web_app._run_embedding_only_match_job) dùng chung một khuôn kết quả."""
+    """Đóng gói kết quả xếp cảnh theo đúng khuôn mà plan_to_markdown() và giao diện mong đợi."""
     return {
         "model": model_name,
         "instruction": instruction,

@@ -38,7 +38,7 @@ def get_models():
 
 
 def vram():
-    """VRAM đang dùng trên toàn GPU (kể cả tiến trình khác, ví dụ sidecar)."""
+    """VRAM đang dùng trên toàn GPU (kể cả tiến trình khác)."""
     if not torch.cuda.is_available():
         return None
     free, total = torch.cuda.mem_get_info()
@@ -53,7 +53,7 @@ def vram():
 # ==========================================
 # Đo bằng cách so dung lượng thư mục cache với tổng dung lượng repo, thay vì móc vào
 # thanh tiến độ của huggingface_hub. Cách này không phụ thuộc chi tiết cài đặt bên trong
-# thư viện (vốn đổi giữa các phiên bản) và đúng cho cả tiến trình sidecar ở venv khác.
+# thư viện (vốn đổi giữa các phiên bản).
 def _repo_cache_dir(repo_id):
     return os.path.join(hf_constants.HF_HUB_CACHE, "models--" + repo_id.replace("/", "--"))
 
