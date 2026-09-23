@@ -15,6 +15,9 @@ media_input/*
 vision_storage/*
 !vision_storage/.gitkeep
 
+# So cong server dang nghe - sinh ra luc chay, xoa luc tat
+.runtime_port
+
 # Log va file tam sinh ra khi debug/test
 *.log
 bat_out.txt

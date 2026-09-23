@@ -1,15 +1,15 @@
 """Trạng thái hệ thống — để giao diện luôn nói rõ đang xảy ra chuyện gì.
 
-Ứng dụng này có ba mô hình nặng, thay nhau lên xuống GPU, và lần đầu dùng mỗi mô hình
-còn phải tải hàng GB từ mạng. Nếu không báo gì, người dùng nhìn thấy một thanh tiến độ
-đứng yên nhiều phút và không biết là đang tải, đang nạp, hay đã treo. Module này giữ
-trạng thái đó ở một chỗ để mọi nơi cùng đọc.
+Ứng dụng này có hai mô hình nặng, thay nhau nạp vào bộ nhớ hợp nhất, và lần đầu dùng mỗi
+mô hình còn có thể phải tải hàng GB từ mạng. Nếu không báo gì, người dùng nhìn thấy một
+thanh tiến độ đứng yên nhiều phút và không biết là đang tải, đang nạp, hay đã treo. Module
+này giữ trạng thái đó ở một chỗ để mọi nơi cùng đọc.
 
 Bốn trạng thái của một mô hình:
-    trong     - không nằm trên GPU (chưa dùng, hoặc đã nhường chỗ cho mô hình khác)
-    dang_tai  - đang tải trọng số từ HuggingFace về đĩa (chỉ xảy ra lần đầu)
-    dang_nap  - trọng số đã có trên đĩa, đang đưa lên GPU
-    san_sang  - đang nằm trên GPU, dùng được ngay
+    trong     - không nằm trong bộ nhớ (chưa dùng, hoặc đã nhường chỗ cho mô hình khác)
+    dang_tai  - đang tải trọng số từ HuggingFace về đĩa (chỉ xảy ra lần đầu, model tải mới)
+    dang_nap  - trọng số đã có trên đĩa, đang đưa vào bộ nhớ
+    san_sang  - đang nằm trong bộ nhớ, dùng được ngay
 """
 
 import os
@@ -38,12 +38,20 @@ def get_models():
 
 
 def vram():
-    """VRAM đang dùng trên toàn GPU (kể cả tiến trình khác, ví dụ sidecar)."""
-    if not torch.cuda.is_available():
+    """RAM hợp nhất đang dùng qua PyTorch/MPS (cả hai model — thị giác lẫn reranker — đều
+    chạy qua đường này nên chip này phản ánh đúng cả hai). Chỉ mang tính tham khảo trên UI,
+    không phải giá trị hệ thống chính xác tuyệt đối. total_mb lấy theo ngưỡng khuyến nghị của
+    MPS (recommended_max_memory) chứ không phải tổng RAM vật lý — đây chính là ngưỡng MPS tự
+    cảnh báo khi vượt qua, nên hữu ích hơn cho việc báo "gần đầy" trên UI."""
+    if not torch.backends.mps.is_available():
         return None
-    free, total = torch.cuda.mem_get_info()
+    try:
+        used = torch.mps.driver_allocated_memory()
+        total = torch.mps.recommended_max_memory()
+    except Exception:  # noqa: BLE001 - chip trạng thái, lỗi thì chỉ ẩn đi
+        return None
     return {
-        "used_mb": round((total - free) / (1024 ** 2)),
+        "used_mb": round(used / (1024 ** 2)),
         "total_mb": round(total / (1024 ** 2)),
     }
 
@@ -135,6 +143,10 @@ class DownloadWatcher:
         clear_download()
 
     def __enter__(self):
+        # model_id la mot thu muc co san tren dia (vd: path trong AI Hub) -> khong can tai
+        # gi tu HuggingFace, khong co gi de theo doi.
+        if os.path.isdir(self.model_id):
+            return self
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return self

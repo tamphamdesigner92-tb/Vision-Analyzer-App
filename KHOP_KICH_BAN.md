@@ -8,61 +8,42 @@ gán một cảnh quay có sẵn, đã sắp đúng thứ tự kịch bản, kè
 ```
 media_input/*.mp4, *.jpg
         │
-        │  ① Qwen2.5-VL-7B-AWQ   (tab 1, đã có sẵn)
+        │  ① Qwen2.5-VL-7B-Instruct-AWQ  (tab 1, đã có sẵn)
         ▼
 vision_storage/<tên file>/*.json     mô tả bằng chữ + keyframe
         │
-        ├──② Qwen3-VL-Embedding-2B  (tuỳ chọn, sidecar)
-        │     nhúng THẲNG ảnh + mô tả thành vector
-        │     → lọc nhanh top-8 ứng viên cho mỗi dòng kịch bản
-        ▼
-        ③ Qwen3-Reranker-4B
+        ② Qwen3-Reranker-4B
            chấm kỹ từng cặp (dòng kịch bản, mô tả cảnh) → xác suất 0..1
         ▼
-        ④ Xếp cảnh (greedy toàn cục) → kế hoạch dựng .md / .json
+        ③ Xếp cảnh (greedy toàn cục) → kế hoạch dựng .md / .json
 ```
 
-Vì sao phải hai mô hình chứ không một:
+Qwen3-Reranker là mô hình CHỈ ĐỌC CHỮ (cross-encoder), không nhìn được ảnh/video trực tiếp
+— vì vậy Qwen2.5-VL phải chạy trước ở tab 1 để biến mỗi cảnh quay thành một mô tả bằng chữ,
+rồi reranker mới chấm được. Reranker đọc cả hai vế (dòng kịch bản + mô tả cảnh) cùng lúc nên
+chính xác hơn cách so vector, đổi lại phải chấm lần lượt N×M cặp thay vì so vector một lần.
 
-| | Reranker-4B | VL-Embedding-2B |
-|---|---|---|
-| Đọc được ảnh/video | Không, chỉ chữ | Có |
-| Độ chính xác từng cặp | Cao (cross-encoder, đọc cả hai vế cùng lúc) | Thấp hơn (hai vế nhúng riêng rồi so vector) |
-| Chi phí | N×M lần chạy GPU | N+M lần nhúng, **cache lại**, so khớp sau đó gần như miễn phí |
+## Một venv duy nhất, chạy trên Apple Silicon
 
-Nên embedding lo phần *rộng* (quét cả kho thật nhanh), reranker lo phần *sâu* (chốt đúng cảnh).
-Đây là mô hình retrieve → rerank tiêu chuẩn.
+Cả hai model đều chạy qua `transformers`, trên MPS, trong cùng một `.venv`:
 
-## Hai môi trường ảo — cố ý, không phải trùng lặp
+- Qwen2.5-VL-7B-Instruct-AWQ nạp qua `transformers` + `gptqmodel` (backend torch-native
+  `TorchAtenAwqLinear`, không cần CUDA). Có một lỗi khớp đường dẫn module đã vá thủ công trong
+  `vision_analyzer_app.py:_load_model()` — xem comment ở đó — nếu không vá, toàn bộ vùng nhận
+  diện thị giác bị nạp trọng số ngẫu nhiên thay vì trọng số thật, model chạy được nhưng "mù".
+  Dùng `dtype=torch.bfloat16` (không dùng `float16` — tràn số trên MPS với checkpoint này).
+- Qwen3-Reranker (bản GPTQ int4 định dạng compressed-tensors) nạp qua `transformers` —
+  weights được `compressed-tensors` tự giải nén khi cần, không cần CUDA.
 
-`Qwen3-VL-Embedding-2B` đòi `transformers>=4.57` + `torch 2.8`, trong khi ứng dụng chính
-bị khoá ở `transformers 4.51.3` + `torch 2.5.1` vì AutoAWQ (nâng lên là vỡ Qwen2.5-VL-AWQ,
-xem cảnh báo đầu `requirements.txt`). Hai bộ thư viện không sống chung được trong một
-tiến trình, nên:
+## Chia chỗ trong bộ nhớ hợp nhất 16GB
 
-- `.venv` — app chính: Qwen2.5-VL + Qwen3-Reranker
-- `.venv-embed` — sidecar: Qwen3-VL-Embedding, chạy riêng ở cổng 8011
-
-Sidecar là **tuỳ chọn**. Không bật thì reranker chấm toàn bộ kho, kết quả vẫn đúng, chỉ chậm hơn khi kho lớn.
-
-Đo trên máy này (30 cảnh quay, 3 dòng kịch bản): bật tầng lọc nhanh thì reranker chỉ
-chấm 8 cảnh/dòng thay vì 30, và **cho ra đúng cùng một kết quả** — 0.972 và 0.980 ở hai
-dòng có cảnh khớp. Vector của cảnh quay được cache trên đĩa nên lần chạy thứ hai trở đi
-bỏ qua hẳn bước nhúng.
-
-## Chia chỗ trên GPU 16GB
-
-Ba mô hình cộng lại vượt xa 16GB, nên mỗi lúc chỉ một mô hình được nằm trên GPU:
+Hai model cộng lại vượt quá những gì nên giữ cùng lúc trong 16GB RAM hợp nhất (còn phải chia
+cho OS, trình duyệt, chính ứng dụng), nên mỗi lúc chỉ một model được nạp:
 
 - Bấm "Phân tích" (tab 1) → tự giải phóng reranker, nạp Qwen2.5-VL
-- Bấm "Khớp kịch bản" (tab 2) → nhúng trước bằng sidecar, bảo sidecar nhả VRAM,
-  giải phóng Qwen2.5-VL, rồi mới nạp reranker
+- Bấm "Khớp kịch bản" (tab 2) → tự giải phóng Qwen2.5-VL, nạp reranker
 
-Mỗi lần đổi mất ~30 giây nạp lại, đổi lấy việc không bao giờ tràn VRAM giữa chừng.
-
-Thứ tự này quan trọng: nếu để Qwen2.5-VL nằm lại trong lúc sidecar nạp model nhúng thì
-VRAM đỉnh chạm 15.4/16.4GB — sát ngưỡng tràn. Giải phóng trước khi gọi sidecar thì đỉnh
-chỉ còn 12.5GB (số đo thật bằng `nvidia-smi`).
+Mỗi lần đổi mất vài chục giây nạp lại, đổi lấy việc không bao giờ tràn bộ nhớ giữa chừng.
 
 ## Theo dõi: mọi thứ hiện trên giao diện web
 
@@ -73,39 +54,27 @@ mỗi 1.5 giây. Nó trả lời đúng bốn câu hỏi hay gặp:
 |---|---|
 | Đang chạy tác vụ gì? | Dòng đầu: "Phân tích ảnh/video: tên_file — 45%" hoặc "Khớp kịch bản — 60%" |
 | Đang làm gì trong tác vụ đó? | Dòng phụ màu xám: thông điệp mới nhất (đang nạp model, đang chấm cảnh 2/4…) |
-| Model nào đang nằm trên GPU? | Ba chip: `không nạp` / `đang tải trọng số` / `đang nạp lên GPU` / `sẵn sàng` |
-| Còn bao nhiêu VRAM? | Chip VRAM, chuyển đỏ kèm chữ "gần đầy" khi vượt 85% |
+| Model nào đang nằm trong bộ nhớ? | Hai chip: `không nạp` / `đang tải trọng số` / `đang nạp` / `sẵn sàng` |
+| Còn bao nhiêu bộ nhớ hợp nhất? | Chip bộ nhớ, chuyển đỏ kèm chữ "gần đầy" khi vượt 85% |
 
-**Không cần mở cửa sổ console của sidecar.** App chính hỏi `/health` của sidecar và hiển
-thị luôn trạng thái của nó — kể cả tiến độ tải 4GB trọng số lần đầu và số mục đang nhúng.
-Sidecar tắt thì chip ghi rõ "chưa bật sidecar".
-
-Lần đầu dùng mỗi mô hình sẽ có giai đoạn tải hàng GB từ mạng. Giai đoạn này được đo bằng
-cách so dung lượng thư mục cache với tổng dung lượng repo, nên thanh tiến độ chạy thật
-chứ không đứng im — đây là lúc dễ tưởng nhầm ứng dụng bị treo nhất.
+Lần đầu dùng mỗi mô hình tải từ HuggingFace (Qwen2.5-VL) sẽ có giai đoạn tải hàng GB từ
+mạng, đo bằng cách so dung lượng thư mục cache với tổng dung lượng repo, nên thanh tiến độ
+chạy thật chứ không đứng im. Reranker nạp từ path cục bộ trong AI Hub nên không có bước này.
 
 ## Cách chạy
 
 ```
-setup_embedding_sidecar.bat      # chạy MỘT LẦN, cài .venv-embed (~3GB + ~4.5GB model)
-
-start_app.bat                    # app chính, tự mở trình duyệt
-start_embedding_sidecar.bat      # sidecar + tự mở giao diện để theo dõi
+./start_app.sh
 ```
 
-Bấm file nào cũng có giao diện: `start_embedding_sidecar.bat` kiểm tra cổng 8000, thấy
-app chính chưa chạy thì khởi động kèm luôn, còn đang chạy rồi thì chỉ mở trình duyệt.
-Sidecar không có giao diện riêng nên nếu không làm vậy, cửa sổ của nó chỉ là một khung
-đen không nói lên điều gì.
+Tự mở trình duyệt khi server sẵn sàng, tự tắt khi đóng tab trình duyệt.
 
-Đổi mô hình reranker bằng biến môi trường, không cần sửa code:
+Đổi model bằng biến môi trường, không cần sửa code:
 
 ```
-set RERANKER_MODEL_ID=Qwen/Qwen3-Reranker-0.6B
+export VL_MODEL_PATH=Qwen/Qwen2.5-VL-7B-Instruct-AWQ
+export RERANKER_MODEL_ID=Qwen/Qwen3-Reranker-0.6B
 ```
-
-Bản 0.6B chỉ ~1.2GB, nhẹ đến mức nằm chung GPU với Qwen2.5-VL được — hợp khi muốn
-khỏi phải đổi model qua lại.
 
 ## Định dạng kịch bản
 
@@ -122,7 +91,6 @@ Nhận cả ba kiểu, tự nhận dạng:
 | `tot` (≥ 0.60) | Reranker tự tin cảnh quay này khớp |
 | `tam` (0.30–0.60) | Dùng được nhưng nên xem lại |
 | `yeu` (< 0.30) | Khớp kém — cân nhắc quay bổ sung |
-| `chua_cham` (điểm âm) | Tầng lọc nhanh đã gạt ra, reranker chưa hề chấm; chỉ được lấy để trám chỗ |
 | `thieu_canh` | Hết cảnh quay chưa dùng (chỉ xảy ra ở chế độ không tái sử dụng) |
 
 Kế hoạch được lưu ở `vision_storage/_plans/plan_<thời gian>.{json,md}`.

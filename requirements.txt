@@ -1,45 +1,47 @@
-# Vision Analyzer - bo phien ban da kiem chung tren Windows 11 + RTX 4070 Ti SUPER (16GB)
+# Vision Analyzer - macOS (Apple Silicon), mot venv duy nhat.
 #
-# CANH BAO: bo phien ban nay rat kho thay the. AutoAWQ da ngung phat trien va chi
-# tuong thich voi torch 2.6.0 / transformers 4.51.3 tro xuong; transformers >= 4.52
-# hoac torch >= 2.6 se lam vo nhanh AWQ. Chi doi phien ban khi thuc su can.
+# Ca hai model (Qwen2.5-VL-7B-Instruct-AWQ va Qwen3-Reranker-4B) chay qua transformers, tren
+# MPS. Khong dung goi autoawq cu (CUDA-only, khong chay tren macOS) - AWQ nap qua gptqmodel,
+# backend torch-native (TorchAtenAwqLinear), khong can CUDA. Khong con bi ghim chat version
+# nhu ban Windows/CUDA cu.
 #
-# CACH CAI LAI TU DAU (chay lan luot, dung thu tu):
+# CACH CAI:
 #
-#   python -m venv .venv
-#   .venv\Scripts\python.exe -m pip install --upgrade pip wheel
-#   .venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
-#   .venv\Scripts\python.exe -m pip install -r requirements.txt
-#   .venv\Scripts\python.exe -m pip install autoawq==0.2.9 --no-deps --no-build-isolation
-#   .venv\Scripts\python.exe -m pip install autoawq-kernels==0.0.9
+#   python3 -m venv .venv
+#   .venv/bin/python3 -m pip install --upgrade pip
+#   .venv/bin/python3 -m pip install -r requirements.txt
 #
-# Luu y:
-#   - torch/torchvision phai lay tu index cu121; ban CPU tren PyPI se khong dung duoc GPU.
-#   - autoawq PHAI cai voi --no-deps, neu khong pip se ha torch xuong ban CPU 2.3.1.
-#   - autoawq-kernels chi nap duoc khi torch da duoc import truoc (torch >= 2.5.1).
-#   - numpy phai < 2 de tuong thich voi torch 2.5.1 va opencv 4.10.
+# LUU Y VE LOI DA GAP VA VA (xem vision_analyzer_app.py:_load_model va comment trong do):
+#   - Checkpoint AWQ goc khai bao modules_to_not_convert=["visual"], nhung o transformers moi
+#     module nam duoi "model.visual...." (co tien to "model."). Khong vao thi toan bo vision
+#     tower bi nap TRONG SO NGAU NHIEN thay vi trong so that - model chay duoc nhung "mu".
+#   - Phai dung dtype=torch.bfloat16 (KHONG dung float16): float16 tran so (inf/nan) trong
+#     attention cua vision tower tren MPS voi checkpoint nay.
 
-# TANG KHOP KICH BAN:
-#   - Qwen3-Reranker-4B chay duoc ngay trong bo nay (transformers 4.51.3 da ho tro
-#     kien truc Qwen3 tu ban 4.51.0), khong can cai them gi.
-#   - Qwen3-VL-Embedding-2B thi KHONG: no doi transformers>=4.57 + torch 2.8, se lam
-#     vo AutoAWQ. No song o venv rieng .venv-embed, xem embedding_sidecar/requirements.txt.
+# --- Model thi giac (Qwen2.5-VL-7B-Instruct-AWQ qua transformers + gptqmodel) ---
+gptqmodel
+qwen-vl-utils
+torchvision
 
-# --- Mo hinh & suy luan ---
-transformers==4.51.3
-tokenizers==0.21.4
-accelerate==1.15.0
-huggingface_hub==0.36.2
-safetensors==0.8.0
-qwen-vl-utils==0.0.14
+# --- Model khop kich ban (Qwen3-Reranker qua transformers + compressed-tensors) ---
+torch
+transformers
+accelerate
+compressed-tensors
+huggingface_hub
+safetensors
 
 # --- Xu ly anh / video ---
-numpy==1.26.4
-opencv-python==4.10.0.84
-pillow==12.3.0
-av==18.1.0
+# KHONG cai opencv-python o day. Ca opencv-python lan av deu bundle mot ban ffmpeg rieng
+# (libavdevice 61 vs 62); nap ca hai vao cung mot tien trinh thi runtime ObjC cua macOS bao
+# lop AVFFrameReceiver/AVFAudioReceiver bi dang ky trung, kem canh bao "mysterious crashes".
+# av la thu khong bo duoc (gptqmodel import no ngay khi nap goi, qwen_vl_utils doc video qua
+# torchvision -> pyav), nen phan video cua ung dung doc thang bang av.
+av
+numpy
+pillow
 
 # --- Giao dien web ---
-fastapi==0.141.1
-uvicorn==0.53.0
-pydantic==2.13.5
+fastapi
+uvicorn
+pydantic
