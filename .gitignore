@@ -28,7 +28,6 @@ Thumbs.db
 .DS_Store
 
 # Phim dai: model/cong cu tai ve + du lieu du an (nam o thu muc nguoi dung chon)
-models/
 tools/llama.cpp/
 projects/
 projects.json

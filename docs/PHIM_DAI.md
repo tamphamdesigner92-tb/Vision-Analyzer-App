@@ -34,18 +34,47 @@ phim ─► [1] Chuẩn bị ─► [2] Bóc băng ─► [3] Cắt cảnh ─�
   08_hoi_dap/  09_chi_muc/index.sqlite  10_nhat_ky/  11_xuat/ (cho tab 2, .srt, báo cáo)
 ```
 
+## Nơi lưu model — dùng chung với các ứng dụng khác
+
+Mọi model đều nằm ở **thư mục mặc định của nơi phát hành**, không nằm trong thư mục app hay thư mục dự án.
+Ứng dụng khác dùng cùng model (faster-whisper, WhisperX, llama.cpp, transformers…) tìm thấy luôn, không phải tải lại.
+
+| Model | Nơi lưu (mặc định) | Ghi chú |
+|---|---|---|
+| Qwen2.5-VL-7B-Instruct-AWQ, Qwen3-Reranker-4B | `%USERPROFILE%\.cache\huggingface\hub\` | transformers tự tìm |
+| Qwen3-30B-A3B-Instruct-2507 Q4_K_M GGUF (`unsloth/…-GGUF`) | `%USERPROFILE%\.cache\huggingface\hub\` | nạp bằng llama-server |
+| Whisper large-v3 bản faster-whisper (`Systran/faster-whisper-large-v3`) | `%USERPROFILE%\.cache\huggingface\hub\` | `WhisperModel("large-v3")` của mọi app đều thấy |
+| Whisper large-v3 bản openai-whisper (`large-v3.pt`) | `%USERPROFILE%\.cache\whisper\` | nguồn để chuyển đổi, không phải tải lại |
+| *(máy GTX 1060)* Qwen2.5-VL-7B GGUF + mmproj (`ggml-org/…-GGUF`) | `%USERPROFILE%\.cache\huggingface\hub\` | xem [TRIEN_KHAI_GTX1060.md](TRIEN_KHAI_GTX1060.md) |
+
+Muốn dời cả cache Hugging Face sang ổ khác thì đặt biến môi trường chuẩn `HF_HOME` (vd `D:\hf`) —
+áp dụng cho mọi ứng dụng dùng Hugging Face, không riêng app này.
+
+Chỉ **chương trình** llama.cpp (không phải model) nằm trong app: `tools\llama.cpp\bin\` — bản **CUDA 12.x**
+cho Windows (b11120). Không dùng bản CUDA 13 (bỏ hỗ trợ GTX 10xx).
+
 ## Cài đặt thêm (đã làm trên máy chính)
 
 ```
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-- `tools/llama.cpp/bin/` — llama.cpp bản **CUDA 12.x** cho Windows (b11120). Không dùng bản CUDA 13 (bỏ hỗ trợ GTX 10xx).
-- Qwen3-30B-A3B-Instruct-2507 Q4_K_M (`unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF`, 18.6 GB) trong cache Hugging Face.
-- Whisper large-v3 cho faster-whisper: chuyển từ file openai-whisper có sẵn, không tải lại 3 GB:
-  ```
-  .venv\Scripts\python.exe tools\convert_whisper_pt.py --pt %USERPROFILE%\.cache\whisper\large-v3.pt --out models\faster-whisper-large-v3
-  ```
+Whisper large-v3 cho faster-whisper — máy đã có `large-v3.pt` thì chuyển đổi, không tải lại 3 GB:
+
+```
+.venv\Scripts\python.exe tools\convert_whisper_pt.py --pt %USERPROFILE%\.cache\whisper\large-v3.pt
+```
+
+Script kiểm tra alignment heads + 100 ngôn ngữ, rồi so sha256 của `model.bin` với bản của
+`Systran/faster-whisper-large-v3`. Trùng từng byte (trên máy chính đã trùng) thì đặt thẳng vào cache
+Hugging Face dưới đúng tên repo đó, kèm các file cấu hình chính thức. Máy chưa có gì thì tải thẳng:
+
+```
+.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; print(snapshot_download('Systran/faster-whisper-large-v3'))"
+```
+
+App chỉ **tìm** model trong máy, không tự tải ngầm giữa lúc chạy phim; thiếu thì báo rõ phải làm gì.
+Biến môi trường ghi đè (chỉ khi thật cần): `WHISPER_MODEL_DIR`, `LLM_GGUF`, `VL_GGUF_DIR`.
 
 ## Số đo trên máy chính (RTX 4070 Ti SUPER 16 GB, 32 GB RAM)
 

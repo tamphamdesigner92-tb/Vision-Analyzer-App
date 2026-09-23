@@ -5,10 +5,13 @@ về) để khỏi tải lại hàng GB. Chỉ tải bộ file cấu hình + tok
 của repo Hugging Face tương ứng, vì .pt không mang theo tokenizer lẫn alignment heads - thứ
 quyết định độ chính xác mốc thời gian từng từ.
 
-    .venv\\Scripts\\python.exe tools\\convert_whisper_pt.py ^
-        --pt %USERPROFILE%\\.cache\\whisper\\large-v3.pt ^
-        --hf-config openai/whisper-large-v3 ^
-        --out models\\faster-whisper-large-v3
+Kết quả được đặt vào CACHE HUGGING FACE MẶC ĐỊNH dưới tên repo Systran/faster-whisper-large-v3 -
+đúng chỗ faster-whisper / WhisperX của mọi ứng dụng tự tìm khi gọi WhisperModel("large-v3") - để
+dùng chung, không ứng dụng nào phải tải lại. Chỉ làm vậy khi model.bin chuyển ra TRÙNG TỪNG BYTE
+(sha256) với model.bin của repo đó; các file cấu hình nhỏ thì lấy bản chính thức của repo. Không
+trùng thì giữ kết quả ở --out và báo rõ.
+
+    .venv\\Scripts\\python.exe tools\\convert_whisper_pt.py --pt %USERPROFILE%\\.cache\\whisper\\large-v3.pt
 """
 
 import argparse
@@ -61,14 +64,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pt", required=True)
     ap.add_argument("--hf-config", default="openai/whisper-large-v3")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", default=None, help="thư mục tạm cho kết quả chuyển đổi (mặc định trong cache HF)")
+    ap.add_argument("--target-repo", default="Systran/faster-whisper-large-v3")
     ap.add_argument("--quantization", default="float16")
     args = ap.parse_args()
 
     from transformers import GenerationConfig, WhisperConfig, WhisperForConditionalGeneration
     from ctranslate2.converters import TransformersConverter
 
-    out = os.path.abspath(args.out)
+    from huggingface_hub import constants as hf_constants
+    out = os.path.abspath(args.out or os.path.join(hf_constants.HF_HUB_CACHE, "_chuyen_doi_whisper_tmp"))
     hf_dir = out + "_hf_tmp"
     if os.path.exists(out):
         sys.exit(f"[X] Thư mục đích đã tồn tại: {out}")
@@ -141,7 +146,40 @@ def main():
           f"{len(ct2['lang_ids'])} ngôn ngữ.", flush=True)
 
     shutil.rmtree(hf_dir)   # bản trung gian dạng transformers (~3GB), không cần giữ
-    print(f"[OK] Xong: {out}", flush=True)
+    place = install_to_hf_cache(out, args.target_repo)
+    print(f"[OK] Xong: {place}", flush=True)
+
+
+def install_to_hf_cache(converted_dir, repo):
+    """model.bin trùng sha256 với repo gốc -> đặt vào cache HF mặc định như thể đã tải từ repo đó."""
+    import hashlib
+    from huggingface_hub import HfApi, hf_hub_download
+
+    info = HfApi().model_info(repo, files_metadata=True)
+    remote = {s.rfilename: s for s in info.siblings}
+    lfs = remote.get("model.bin") and remote["model.bin"].lfs
+    want = lfs.sha256 if lfs else None
+    local_bin = os.path.join(converted_dir, "model.bin")
+    h = hashlib.sha256()
+    with open(local_bin, "rb") as f:
+        for block in iter(lambda: f.read(8 * 1024 * 1024), b""):
+            h.update(block)
+    if h.hexdigest() != want:
+        print(f"[!] model.bin chuyển ra KHÁC bản của {repo} — giữ nguyên ở {converted_dir}. Hãy đặt "
+              f"WHISPER_MODEL_DIR={converted_dir} hoặc tải thẳng {repo}.", flush=True)
+        return converted_dir
+    print(f"[*] model.bin trùng từng byte với {repo} — đặt vào cache Hugging Face mặc định...", flush=True)
+    snapshot = None
+    for name in remote:
+        if name != "model.bin":      # file cấu hình nhỏ: lấy đúng bản chính thức của repo
+            snapshot = os.path.dirname(hf_hub_download(repo, name, revision=info.sha))
+    os.replace(local_bin, os.path.join(snapshot, "model.bin"))
+    refs = os.path.join(os.path.dirname(os.path.dirname(snapshot)), "refs")
+    os.makedirs(refs, exist_ok=True)
+    with open(os.path.join(refs, "main"), "w", encoding="utf-8") as f:
+        f.write(info.sha)
+    shutil.rmtree(converted_dir)
+    return snapshot
 
 
 if __name__ == "__main__":

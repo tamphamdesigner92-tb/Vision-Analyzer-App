@@ -1,7 +1,9 @@
 """Bước [2] Bóc băng bằng faster-whisper large-v3 - chỉ chạy khi phim không có phụ đề.
 
-Model: models/faster-whisper-large-v3 (chuyển từ ~/.cache/whisper/large-v3.pt bằng
-tools/convert_whisper_pt.py). Hồ sơ "high" chạy float16, "low" (GTX 1060) chạy int8.
+Model: Systran/faster-whisper-large-v3 nằm ở cache Hugging Face MẶC ĐỊNH (~/.cache/huggingface/hub)
+- cùng chỗ mà faster-whisper, WhisperX… của các ứng dụng khác tự tìm, nên dùng chung được, không
+tải lại. Máy đã có ~/.cache/whisper/large-v3.pt thì tools/convert_whisper_pt.py chuyển đổi và đặt
+thẳng vào đó. Hồ sơ "high" chạy float16, "low" (GTX 1060) chạy int8.
 
 Phim nhiều thứ tiếng:
   - Nhận diện ngôn ngữ trên 8 khung 30 giây rải đều khắp phim chứ không chỉ 30 giây đầu (đầu
@@ -16,9 +18,9 @@ import os
 import re
 
 from film import stage_io, subtitles
-from film.project import APP_DIR, write_json_atomic
+from film.project import write_json_atomic
 
-MODEL_DIR = os.environ.get("WHISPER_MODEL_DIR", os.path.join(APP_DIR, "models", "faster-whisper-large-v3"))
+WHISPER_REPO = "Systran/faster-whisper-large-v3"
 SAMPLE_RATE = 16000
 LANG_WINDOWS = 8
 DOMINANT_SHARE = 0.6
@@ -28,6 +30,22 @@ _SENT_END = re.compile(r"[.?!…。？！]$")
 
 MIN_SPEECH_SEC = 4.0     # vùng có ít tiếng nói hơn mức này thì không cho bầu (nhạc, tiếng động)
 MIN_LANG_PROB = 0.6
+
+
+def whisper_model_path():
+    """Thư mục model: WHISPER_MODEL_DIR nếu có đặt, không thì bản trong cache Hugging Face mặc định.
+
+    Chỉ tìm trong máy (local_files_only): thiếu model thì báo rõ để người dùng chủ động tải hoặc
+    chuyển đổi, chứ không âm thầm tải 3GB giữa lúc đang chạy phim."""
+    env = os.environ.get("WHISPER_MODEL_DIR")
+    if env:
+        return env
+    from huggingface_hub import snapshot_download
+    try:
+        return snapshot_download(WHISPER_REPO, local_files_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Chưa có {WHISPER_REPO} trong cache Hugging Face — xem docs/PHIM_DAI.md "
+                           f"(tải về, hoặc chuyển đổi từ ~/.cache/whisper/large-v3.pt).") from exc
 
 
 def detect_languages(model, audio):
@@ -115,7 +133,7 @@ def main(project, profile, args):
         raise RuntimeError("Chưa có audio.wav — bước Chuẩn bị chưa tách audio.")
     compute = profile["whisper_compute"]
     stage_io.progress(2, f"Nạp Whisper large-v3 ({compute})...")
-    model = WhisperModel(MODEL_DIR, device="cuda", compute_type=compute,
+    model = WhisperModel(whisper_model_path(), device="cuda", compute_type=compute,
                          cpu_threads=profile["torch_threads"])
 
     stage_io.model_loaded(4, "Đã nạp Whisper.")

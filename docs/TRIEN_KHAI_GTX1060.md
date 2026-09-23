@@ -86,13 +86,18 @@ Máy chính **không** giữ các model riêng của máy yếu. Tải trực ti
 | 2 | **Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf** (repo `ggml-org/Qwen2.5-VL-7B-Instruct-GGUF`) | 4.68GB | cache Hugging Face | mô tả cảnh |
 | 3 | **mmproj-Qwen2.5-VL-7B-Instruct-Q8_0.gguf** (cùng repo) | 0.85GB | cache Hugging Face | phần "mắt" của model thị giác |
 | 4 | **Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf** (repo `unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF`) | 18.56GB | cache Hugging Face | tổng hợp + hỏi đáp |
-| 5 | **Whisper large-v3 định dạng faster-whisper** | 3.09GB | `models\faster-whisper-large-v3\` | bóc băng (bỏ qua nếu phim có .srt) |
+| 5 | **Whisper large-v3 định dạng faster-whisper** (repo `Systran/faster-whisper-large-v3`) | 3.09GB | cache Hugging Face | bóc băng (bỏ qua nếu phim có .srt) |
 | 6 | *(tuỳ chọn, cho tab 2)* **Qwen3-Reranker-0.6B** (repo `Qwen/Qwen3-Reranker-0.6B`) | ~1.2GB | cache Hugging Face | khớp kịch bản |
 
-Mục 1, 4, 5 **giống hệt** máy chính. Có thể chép thẳng từ máy chính sang, rồi kiểm tra lại dung lượng file:
-- `tools\llama.cpp\bin\` → cùng chỗ trên PC GTX 1060
+"Cache Hugging Face" là thư mục mặc định `%USERPROFILE%\.cache\huggingface\hub\`, dùng chung cho mọi ứng dụng —
+**không** phải thư mục app hay thư mục dự án. PC GTX 1060 đã có ứng dụng khác tải sẵn model nào (vd WhisperX đã
+có `Systran/faster-whisper-large-v3`) thì app dùng luôn, khỏi tải lại. Muốn để cache ở ổ khác: biến môi trường
+chuẩn `HF_HOME=D:\hf`.
+
+Mục 1, 4, 5 **giống hệt** máy chính. Có thể chép thẳng từ máy chính sang (giữ nguyên cấu trúc thư mục), rồi kiểm tra lại dung lượng file:
+- `tools\llama.cpp\bin\` → cùng chỗ trong thư mục app trên PC GTX 1060
 - `%USERPROFILE%\.cache\huggingface\hub\models--unsloth--Qwen3-30B-A3B-Instruct-2507-GGUF\` → cùng chỗ
-- `models\faster-whisper-large-v3\` → cùng chỗ
+- `%USERPROFILE%\.cache\huggingface\hub\models--Systran--faster-whisper-large-v3\` → cùng chỗ
 
 ### Tải trên PC GTX 1060
 
@@ -104,15 +109,17 @@ Mục 1, 4, 5 **giống hệt** máy chính. Có thể chép thẳng từ máy c
 Whisper large-v3, chọn **một** trong hai cách:
 - **Máy đã có** `%USERPROFILE%\.cache\whisper\large-v3.pt` (của gói openai-whisper): chuyển đổi, không tải lại 3GB:
   ```
-  .venv\Scripts\python.exe tools\convert_whisper_pt.py --pt %USERPROFILE%\.cache\whisper\large-v3.pt --out models\faster-whisper-large-v3
+  .venv\Scripts\python.exe tools\convert_whisper_pt.py --pt %USERPROFILE%\.cache\whisper\large-v3.pt
   ```
-  Script tự kiểm tra alignment heads và 100 ngôn ngữ; nếu sai thì báo lỗi.
+  Script tự kiểm tra alignment heads và 100 ngôn ngữ, rồi đặt kết quả vào cache Hugging Face dưới tên
+  `Systran/faster-whisper-large-v3` khi `model.bin` trùng sha256 với bản gốc (trên máy chính đã trùng).
 - **Chưa có gì:** tải bản đã chuyển sẵn:
   ```
-  .venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download as s; print(s('Systran/faster-whisper-large-v3', local_dir='models/faster-whisper-large-v3'))"
+  .venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download as s; print(s('Systran/faster-whisper-large-v3'))"
   ```
 
-Muốn để model GGUF thị giác ở thư mục riêng thay vì cache Hugging Face: đặt biến môi trường `VL_GGUF_DIR=D:\models` và để cả hai file (mục 2, 3) trong đó.
+Chỉ khi thật cần để model ở chỗ khác cache chuẩn: `VL_GGUF_DIR` (thư mục chứa 2 file mục 2–3),
+`LLM_GGUF` (đường dẫn file mục 4), `WHISPER_MODEL_DIR` (thư mục mục 5). Mặc định không cần đặt gì.
 
 Tab 2 (khớp kịch bản): model mặc định Qwen3-Reranker-4B cần khoảng 8GB, không vừa 6GB. Trước khi chạy app, đặt:
 
