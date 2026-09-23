@@ -27,7 +27,11 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 import app_status
+import resource_guard
 import script_matcher
+from film import project as film_project
+from film import web_api as film_web_api
+from film.service import FilmService
 import vision_analyzer_app as vision
 from vision_analyzer_app import LocalVisionAnalyzer
 
@@ -83,7 +87,7 @@ class Job:
     def __init__(self, job_id, kind="analyze", filename=None, media_type=None, prompt=None,
                  fps=DEFAULT_FPS, payload=None):
         self.id = job_id
-        self.kind = kind                # analyze (xem anh/video) | match (khop kich ban)
+        self.kind = kind                # analyze | match | film (phim dai) | ask (hoi dap ve phim)
         self.filename = filename
         self.media_type = media_type
         self.prompt = prompt
@@ -116,6 +120,19 @@ job_queue = queue.Queue()
 analyzer = None
 matcher = None
 analyzer_lock = threading.Lock()
+
+
+def _enqueue(kind, payload):
+    job = Job(uuid.uuid4().hex[:12], kind=kind, payload=payload)
+    with jobs_lock:
+        jobs[job.id] = job
+    job_queue.put(job.id)
+    return job.id
+
+
+# Phim dai (tab 3): pipeline chay trong CUNG worker GPU nay - moi luc chi mot viec dung GPU.
+film_service = FilmService(_enqueue)
+app.include_router(film_web_api.build_router(film_service, lambda: jobs, jobs_lock))
 
 
 # ==========================================
@@ -180,6 +197,9 @@ def _browser_watchdog():
         with ws_lock:
             empty_since = clients_empty_since if (had_any_client and not ws_clients) else None
         if empty_since is not None and time.time() - empty_since > BROWSER_GRACE_SECONDS:
+            # Phim dai dang chay (hoac dang luu du an): chay tiep o nen, xong viec moi tat.
+            if film_service.busy():
+                continue
             shutdown_now("Tab trinh duyet da dong.")
 
 
@@ -218,9 +238,7 @@ def _result_stem_for(filename):
 def _run_match_job(job, on_progress):
     """Khop kich ban voi kho canh quay da phan tich, roi luu ke hoach dung ra file."""
     global matcher
-    candidates = script_matcher.collect_candidates(
-        STORAGE_DIR, granularity=job.payload.get("granularity", "segment")
-    )
+    candidates = _all_candidates(job.payload.get("granularity", "segment"))
     scenes = script_matcher.split_script(job.payload["script"])
 
     with analyzer_lock:
@@ -272,9 +290,37 @@ def _worker():
         job.status = "running"
         try:
             def on_progress(message, percent):
-                job.messages.append(message.rstrip())
+                if message:
+                    job.messages.append(message.rstrip())
                 if percent is not None:
                     job.percent = percent
+
+            if job.kind == "film":
+                pid = job.payload["project_id"]
+                if film_service.is_cancelled(pid):
+                    film_service.live[pid]["state"] = "paused"
+                    job.status = "done"
+                    continue
+                # Nha het model cua tab 1/2 dang nam trong server: cac buoc phim chay trong
+                # tien trinh con rieng va can tron GPU.
+                with analyzer_lock:
+                    _free_analyzer(on_progress)
+                    _free_matcher(on_progress)
+                job.result = {"outcome": film_service.run_pipeline(pid, on_progress)}
+                job.percent = 100.0
+                job.status = "done"
+                continue
+            if job.kind == "ask":
+                with analyzer_lock:
+                    _free_analyzer(on_progress)
+                    _free_matcher(on_progress)
+                job.result = film_service.answer(job.payload["project_id"], job.payload["question"], on_progress)
+                job.percent = 100.0
+                job.status = "done"
+                continue
+
+            # Tab 1/2 can GPU: tat llama-server cua phan hoi dap phim neu dang mo.
+            film_service.release_gpu()
 
             # Nhanh khop kich ban. Loi (neu co) roi xuong khoi except chung ben duoi,
             # va khoi finally van dong job dung mot lan nho continue di qua finally.
@@ -469,7 +515,7 @@ def script_candidates(granularity: str = "segment"):
     """Liệt kê kho ứng viên (mô tả đã phân tích trong vision_storage/) để khớp kịch bản."""
     if granularity not in ("segment", "file"):
         raise HTTPException(status_code=400, detail="granularity phải là segment hoặc file.")
-    candidates = script_matcher.collect_candidates(STORAGE_DIR, granularity=granularity)
+    candidates = _all_candidates(granularity)
     return {
         "granularity": granularity,
         "count": len(candidates),
@@ -481,6 +527,13 @@ def script_candidates(granularity: str = "segment"):
             for c in candidates
         ],
     }
+
+
+def _all_candidates(granularity):
+    """Ung vien khop kich ban: video da phan tich o tab 1 + canh cua cac du an phim dai (tab 3)."""
+    projects = [(p["id"], p["path"]) for p in film_project.list_projects() if p["exists"]]
+    return (script_matcher.collect_candidates(STORAGE_DIR, granularity=granularity)
+            + script_matcher.collect_project_candidates(projects, granularity=granularity))
 
 
 class MatchRequest(BaseModel):
@@ -557,7 +610,17 @@ def system_status():
         "models": app_status.get_models(),
         "download": app_status.get_download(),
         "vram": app_status.vram(),
+        "memory": resource_guard.status_chip(),
+        "film": _film_status_brief(running),
     }
+
+
+def _film_status_brief(running_job):
+    if running_job is None or running_job.kind not in ("film", "ask"):
+        return None
+    pid = running_job.payload.get("project_id")
+    live = film_service.live_status(pid) if running_job.kind == "film" else None
+    return {"project_id": pid, "kind": running_job.kind, "live": live}
 
 
 @app.get("/api/jobs/{job_id}")

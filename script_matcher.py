@@ -161,6 +161,50 @@ def collect_candidates(storage_dir, granularity="segment"):
     return [c for c in candidates if c["text"]]
 
 
+def collect_project_candidates(projects, granularity="segment"):
+    """Cảnh của các dự án phim dài (tab 3) làm ứng viên khớp kịch bản.
+
+    projects: [(project_id, thư mục dự án)]. Đọc 11_xuat/<tên>.json do bước Tổng hợp xuất ra
+    (cùng khuôn segments/images với vision_storage/), ảnh đại diện lấy qua API của dự án
+    (thumb_url) vì keyframe nằm trong thư mục dự án chứ không nằm trong vision_storage/."""
+    candidates = []
+    for pid, root in projects:
+        export_dir = os.path.join(root, "11_xuat")
+        if not os.path.isdir(export_dir):
+            continue
+        for name in sorted(os.listdir(export_dir)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(export_dir, name), encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("project_id") != pid:
+                continue
+            images = data.get("images", [])
+            common = {"stem": None, "media_type": "video", "source_file": data.get("source_file", name),
+                      "project_id": pid}
+            segments = data.get("segments", [])
+            if granularity == "segment":
+                for i, seg in enumerate(segments):
+                    thumb = images[i] if i < len(images) else None
+                    candidates.append({
+                        **common, "id": f"film:{pid}#{seg['scene_id']}", "segment_index": seg["index"],
+                        "start_sec": seg.get("start_sec"), "end_sec": seg.get("end_sec"),
+                        "text": (seg.get("text") or "").strip(), "thumbnail": thumb,
+                        "thumb_url": f"/api/film/{pid}/file/{thumb}" if thumb else None,
+                    })
+            elif segments:
+                candidates.append({
+                    **common, "id": f"film:{pid}", "segment_index": None, "start_sec": None, "end_sec": None,
+                    "text": " ".join(s.get("text", "") for s in segments)[:MAX_DOC_CHARS],
+                    "thumbnail": images[0] if images else None,
+                    "thumb_url": f"/api/film/{pid}/file/{images[0]}" if images else None,
+                })
+    return [c for c in candidates if c["text"]]
+
+
 def build_result(model_name, scenes, candidates, plan, instruction=None, reuse="segment", shortlisted=None):
     """Đóng gói kết quả xếp cảnh theo đúng khuôn mà plan_to_markdown() và giao diện mong đợi."""
     return {

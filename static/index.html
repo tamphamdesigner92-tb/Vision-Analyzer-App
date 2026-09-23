@@ -229,6 +229,46 @@
     text-align: center;
     font-weight: 560;
   }
+
+  /* ----- Tab 3: phim dai ----- */
+  input[type=text] {
+    width: 100%; padding: 8px 9px; font: inherit; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); flex: 1; min-width: 0;
+  }
+  label.chk { display: flex; gap: 7px; align-items: flex-start; cursor: pointer; color: var(--text); font-size: 13.5px; }
+  label.chk input { margin-top: 3px; width: auto; }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .badge.warn { border-color: var(--err); color: var(--err); }
+  .badge.ok { border-color: var(--ok); color: var(--ok); }
+  ul.stages { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul.stages li { display: grid; grid-template-columns: 24px 1fr auto; gap: 4px 8px; align-items: center;
+                 padding: 7px 0; border-bottom: 1px dashed var(--border); }
+  ul.stages .ic { text-align: center; font-size: 15px; }
+  ul.stages .nm { font-weight: 560; }
+  ul.stages .dt { grid-column: 2 / 4; font-size: 12.5px; color: var(--muted); word-break: break-word; }
+  ul.stages li.cur .nm { color: var(--accent); }
+  ul.stages li.error .ic, ul.stages li.error .st { color: var(--err); }
+  ul.stages li.done .ic { color: var(--ok); }
+  .film-cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 1100px) { .film-cols { grid-template-columns: 1fr; } }
+  .film-video video { width: 100%; max-height: 46vh; border-radius: 8px; background: #000; display: block; }
+  .tree { max-height: 58vh; overflow-y: auto; font-size: 14px; }
+  .tree details { margin: 3px 0; }
+  .tree summary { color: var(--text); font-size: 14px; }
+  .tree .kids { padding-left: 16px; }
+  .ts { color: var(--accent); cursor: pointer; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; white-space: nowrap; }
+  .ts:hover { text-decoration: underline; }
+  .sc { padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+  .sc:hover, .sc.sel { background: var(--accent-soft); }
+  .scene-detail { margin-top: 12px; font-size: 14px; }
+  .scene-detail h3 { margin: 0 0 6px; font-size: 15px; }
+  .scene-detail .frames img { height: 92px; cursor: pointer; }
+  .dlg { font-size: 13px; margin: 3px 0; }
+  .hit { padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 13.5px; cursor: pointer; }
+  .hit:hover { background: var(--accent-soft); }
+  .qa-item { border-top: 1px solid var(--border); padding: 10px 0; }
+  .qa-item .q { font-weight: 600; }
+  .qa-item .a { white-space: pre-wrap; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -240,11 +280,12 @@
   <div>
     <h1>Vision Analyzer</h1>
     <div class="path" id="mediaDir">…</div>
-    <div class="path">Đóng tab này sẽ tự tắt ứng dụng và giải phóng GPU.</div>
+    <div class="path">Đóng tab này sẽ tự tắt ứng dụng và giải phóng GPU — trừ khi đang chạy phim dài (tab 3), khi đó app chạy tiếp ở nền rồi mới tắt.</div>
   </div>
   <div class="tabs">
     <button id="tabBtnAnalyze" class="on">1 · Phân tích ảnh/video</button>
     <button id="tabBtnScript">2 · Khớp kịch bản</button>
+    <button id="tabBtnFilm">3 · Phim dài</button>
     <button id="rescan">Quét lại thư mục</button>
   </div>
 </header>
@@ -362,6 +403,95 @@
         <span class="status" id="planMeta"></span>
       </div>
       <div id="storyboard"></div>
+    </div>
+  </section>
+</main>
+
+<main id="tabFilm" hidden style="grid-template-columns: 340px 1fr;">
+  <section class="panel">
+    <h2>Dự án phim dài</h2>
+    <div class="row" style="margin-top:0">
+      <button class="primary" id="fNew">Tạo dự án mới</button>
+      <button id="fOpen">Mở dự án…</button>
+    </div>
+    <div class="settings" id="fNewForm" hidden>
+      <label for="fSource">File phim</label>
+      <div class="row" style="margin-top:0"><input type="text" id="fSource" placeholder="Đường dẫn file phim"><button id="fPickSource">Chọn…</button></div>
+      <label for="fName">Tên dự án</label>
+      <input type="text" id="fName" placeholder="Mặc định: tên file phim">
+      <label for="fLang">Ngôn ngữ lời thoại</label>
+      <select id="fLang">
+        <option value="auto">Tự nhận (phim nhiều thứ tiếng)</option>
+        <option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option>
+        <option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option>
+        <option value="ja">Tiếng Nhật</option><option value="fr">Tiếng Pháp</option>
+        <option value="th">Tiếng Thái</option><option value="es">Tiếng Tây Ban Nha</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="fForceWhisper"> Vẫn bóc băng bằng Whisper dù đã có phụ đề .srt</label>
+      <label class="chk"><input type="checkbox" id="fCopySource"> Chép phim vào dự án (dự án tự chứa đủ, tốn thêm dung lượng)</label>
+      <div class="hint">Dự án được tạo trong thư mục mặc định; bấm <b>Lưu dự án…</b> để chuyển toàn bộ dữ liệu sang thư mục bạn chọn.</div>
+      <div class="row"><button class="primary" id="fCreate">Tạo</button><button id="fCancelNew">Huỷ</button></div>
+      <div class="status" id="fNewStatus"></div>
+    </div>
+    <h2 style="margin-top:16px">Gần đây</h2>
+    <ul class="files" id="fList"></ul>
+    <hr>
+    <div class="hint">Thư mục mặc định: <b id="fRoot">…</b></div>
+    <div class="row" style="margin-top:6px"><button id="fChangeRoot">Đổi thư mục mặc định…</button></div>
+    <div class="hint" id="fProfile"></div>
+  </section>
+
+  <section class="panel">
+    <div class="empty" id="fNone">Chọn hoặc tạo một dự án ở cột bên trái.</div>
+    <div id="fProject" hidden>
+      <h2 id="fTitle" style="text-transform:none;font-size:17px;color:var(--text)"></h2>
+      <div class="meta" id="fMeta"></div>
+      <div class="row">
+        <button class="primary" id="fRun">Chạy</button>
+        <button id="fPause">Tạm dừng</button>
+        <button id="fSave">Lưu dự án…</button>
+        <button id="fRelink" hidden>Chọn lại file phim…</button>
+      </div>
+      <div class="status" id="fStatus"></div>
+      <div class="banner" id="fMove" hidden></div>
+      <ul class="stages" id="fStages"></ul>
+      <details id="fLogWrap"><summary>Nhật ký chi tiết</summary><div class="log" id="fLog"></div></details>
+
+      <div id="fResults" hidden>
+        <hr>
+        <div class="film-cols">
+          <div>
+            <div class="film-video"><video id="fVideo" controls preload="metadata"></video></div>
+            <div class="scene-detail" id="fScene"><div class="hint">Bấm vào một cảnh trong mục lục để xem chi tiết và tua tới đó.</div></div>
+          </div>
+          <div>
+            <div class="row" style="margin-top:0">
+              <input type="text" id="fSearch" placeholder="Tìm trong phim (gõ không dấu cũng được)…">
+              <button id="fSearchBtn">Tìm</button>
+            </div>
+            <div id="fHits"></div>
+            <h2 style="margin-top:14px">Mục lục</h2>
+            <div class="tree" id="fTree"></div>
+          </div>
+        </div>
+        <div id="fQABox" hidden>
+          <hr>
+          <h2>Hỏi đáp về phim</h2>
+          <div class="row" style="margin-top:0">
+            <input type="text" id="fQuestion" placeholder="Vd: Vì sao nhân vật chính bị truy đuổi?">
+            <button class="primary" id="fAsk">Hỏi</button>
+          </div>
+          <div class="status" id="fAskStatus"></div>
+          <div id="fQA"></div>
+          <hr>
+          <h2>Tổng quan</h2>
+          <div class="row" style="margin-top:0">
+            <button id="fDlReport">Tải báo cáo .md</button>
+            <button id="fDlSrt">Tải lời thoại .srt</button>
+          </div>
+          <div class="result" id="fOverview"></div>
+        </div>
+      </div>
     </div>
   </section>
 </main>
@@ -590,7 +720,7 @@ const MODEL_STATE_LABEL = {
   dang_nap: 'đang nạp lên GPU',
   san_sang: 'sẵn sàng',
 };
-const TASK_LABEL = { analyze: 'Phân tích ảnh/video', match: 'Khớp kịch bản' };
+const TASK_LABEL = { analyze: 'Phân tích ảnh/video', match: 'Khớp kịch bản', film: 'Phim dài', ask: 'Hỏi đáp phim' };
 
 function chip(name, state, extra, labels) {
   const label = (labels || MODEL_STATE_LABEL)[state] || state;
@@ -640,6 +770,12 @@ async function refreshStatus() {
     chips.push(`<span class="chip${warn}"><b>VRAM</b> · ${st.vram.used_mb} / ${st.vram.total_mb} MB (${pct}%)` +
       `${warn ? ' — gần đầy' : ''}</span>`);
   }
+  if (st.memory) {
+    const m = st.memory;
+    const low = m.ram_available_gb < 2;
+    chips.push(`<span class="chip${low ? ' canhbao' : ''}"><b>RAM trống</b> · ${m.ram_available_gb} / ${m.ram_total_gb} GB` +
+      ` · pagefile ${m.pagefile_used_gb} GB${low ? ' — sắp hết RAM' : ''}</span>`);
+  }
   $('stChips').innerHTML = chips.join('');
 }
 
@@ -653,12 +789,14 @@ let matchPoller = null;
 let scriptLoaded = false;
 
 function showTab(which) {
-  const isScript = which === 'script';
-  $('tabAnalyze').hidden = isScript;
-  $('tabScript').hidden = !isScript;
-  $('tabBtnAnalyze').className = isScript ? '' : 'on';
-  $('tabBtnScript').className = isScript ? 'on' : '';
-  if (isScript && !scriptLoaded) { scriptLoaded = true; loadCandidates(); }
+  $('tabAnalyze').hidden = which !== 'analyze';
+  $('tabScript').hidden = which !== 'script';
+  $('tabFilm').hidden = which !== 'film';
+  $('tabBtnAnalyze').className = which === 'analyze' ? 'on' : '';
+  $('tabBtnScript').className = which === 'script' ? 'on' : '';
+  $('tabBtnFilm').className = which === 'film' ? 'on' : '';
+  if (which === 'script' && !scriptLoaded) { scriptLoaded = true; loadCandidates(); }
+  if (which === 'film' && !filmLoaded) { filmLoaded = true; loadFilmProjects(); }
 }
 
 function fmtWhen(m) {
@@ -667,6 +805,7 @@ function fmtWhen(m) {
 }
 
 function thumbHtml(m) {
+  if (m && m.thumb_url) return `<img src="${esc(m.thumb_url)}" alt="">`;   // canh cua du an phim dai
   if (!m || !m.thumbnail) return '<div class="noimg">không có ảnh</div>';
   return `<img src="/api/result-file/${encodeURIComponent(m.stem)}/${encodeURIComponent(m.thumbnail)}" alt="">`;
 }
@@ -803,6 +942,7 @@ async function runMatch() {
 
 $('tabBtnAnalyze').onclick = () => showTab('analyze');
 $('tabBtnScript').onclick = () => showTab('script');
+$('tabBtnFilm').onclick = () => showTab('film');
 $('granularity').onchange = loadCandidates;
 $('reuse').onchange = () => {
   const o = $('reuse').selectedOptions[0];
@@ -814,6 +954,310 @@ $('runMatch').onclick = runMatch;
 // vi trinh duyet bop timer cua tab chay nen, con WebSocket thi khong bi bop.
 let liveSocket = null;
 let liveRetries = 0;
+
+
+// ==========================================
+// TAB 3: PHIM DAI
+// ==========================================
+let filmLoaded = false;
+let curFilm = null;          // id du an dang mo
+let filmData = null;         // ban tom tat moi nhat tu /api/film/<id>
+let filmTreeSig = null;      // doi thi moi dung lai muc luc
+let filmPoll = null;
+const STAGES = [['prepare', 'Chuẩn bị'], ['asr', 'Bóc băng'], ['scenes', 'Cắt cảnh'], ['cards', 'Mô tả cảnh'], ['synthesis', 'Tổng hợp']];
+const ST_ICON = { pending: '○', running: '◐', waiting: '⏳', paused: '⏸', done: '✓', skipped: '↷', error: '✗', interrupted: '⚠' };
+const ST_TEXT = { pending: 'chưa chạy', running: 'đang chạy', waiting: 'đang chờ tài nguyên', paused: 'đã tạm dừng',
+                  done: 'xong', skipped: 'bỏ qua', error: 'lỗi', interrupted: 'bị ngắt giữa chừng' };
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || ('Lỗi ' + r.status));
+  return data;
+}
+
+function hmsOf(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return [h, m, s].map((x) => String(x).padStart(2, '0')).join(':');
+}
+function secOf(hms) {
+  const p = hms.split(':').map(Number);
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+}
+function tsLink(sec, node) {
+  return `<span class="ts" data-t="${sec}"${node ? ` data-node="${esc(node)}"` : ''}>${hmsOf(sec)}</span>`;
+}
+// Bien moi "[hh:mm:ss]" trong van ban (cau tra loi hoi dap) thanh moc bam duoc de tua video.
+function linkTimes(text) {
+  return esc(text).replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, (m, t) => `<span class="ts" data-t="${secOf(t)}">[${t}]</span>`);
+}
+
+function seek(sec) {
+  const v = $('fVideo');
+  if (!v.src) return;
+  v.currentTime = sec;
+  v.play().catch(() => {});
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('#tabFilm .ts, #tabFilm [data-t]');
+  if (!t) return;
+  e.stopPropagation();
+  if (t.dataset.node) openScene(t.dataset.node);
+  if (t.dataset.t !== undefined) seek(parseFloat(t.dataset.t));
+});
+
+async function loadFilmProjects() {
+  let d;
+  try { d = await api('/api/film/projects'); } catch (e) { $('fList').innerHTML = `<li>${esc(e.message)}</li>`; return; }
+  $('fRoot').textContent = d.settings.projects_root;
+  const pr = d.profile;
+  $('fProfile').textContent = `Hồ sơ phần cứng: ${pr.name === 'high' ? 'máy mạnh' : 'máy cấu hình thấp'} (${pr.reason}) · RAM ${pr.ram_total_gb} GB`;
+  $('fList').innerHTML = d.projects.length ? d.projects.map((p) => `
+    <li data-id="${esc(p.id)}" class="${p.id === curFilm ? 'sel' : ''}" ${p.exists ? '' : 'style="opacity:.55"'}>
+      <div class="fname">${esc(p.name)}</div>
+      <div class="meta"><span style="word-break:break-all">${esc(p.path)}</span>${p.exists ? '' : '<span class="badge warn">không thấy thư mục</span>'}</div>
+    </li>`).join('') : '<li style="cursor:default"><div class="meta">Chưa có dự án nào.</div></li>';
+  $('fList').querySelectorAll('li[data-id]').forEach((li) => { li.onclick = () => selectFilm(li.dataset.id); });
+}
+
+async function selectFilm(id) {
+  curFilm = id;
+  filmTreeSig = null;
+  $('fVideo').removeAttribute('src');
+  $('fScene').innerHTML = '<div class="hint">Bấm vào một cảnh trong mục lục để xem chi tiết và tua tới đó.</div>';
+  $('fHits').innerHTML = '';
+  $('fQA').innerHTML = '';
+  $('fList').querySelectorAll('li').forEach((li) => li.classList.toggle('sel', li.dataset.id === id));
+  await refreshFilm();
+  clearInterval(filmPoll);
+  filmPoll = setInterval(() => { if (!$('tabFilm').hidden) refreshFilm(); }, 2000);
+}
+
+function stageDetail(key, st, p) {
+  const live = p.live;
+  if (live && live.stage === key && live.state === 'running') {
+    const last = [...live.messages].reverse().find((m) => m.includes(STAGES.find((s) => s[0] === key)[1]));
+    return last ? last.replace(/^\[[^\]]+\]\s*/, '') : 'Đang chạy...';
+  }
+  if (key === 'cards' && p.planned_scenes) return `${p.scene_count}/${p.planned_scenes} cảnh đã có file` + (st.detail ? ' — ' + st.detail : '');
+  return st.detail || (st.result && key === 'scenes' ? `${st.result.scenes} cảnh từ ${st.result.shots} shot` : '');
+}
+
+async function refreshFilm() {
+  if (!curFilm) return;
+  let p;
+  try { p = await api('/api/film/' + curFilm); } catch (e) { $('fStatus').textContent = e.message; $('fStatus').className = 'status err'; return; }
+  filmData = p;
+  $('fNone').hidden = true;
+  $('fProject').hidden = false;
+  $('fTitle').textContent = p.name;
+  const src = p.source;
+  $('fMeta').innerHTML = [
+    `<span style="word-break:break-all">📁 ${esc(p.path)}</span>`,
+    p.saved ? '<span class="badge ok">đã lưu</span>' : '<span class="badge warn">chưa lưu — đang ở thư mục mặc định</span>',
+    `<span>🎬 ${esc(src.file_name)} · ${hmsOf(src.duration_sec)}</span>`,
+    p.source_status !== 'ok' ? `<span class="badge warn">${p.source_status === 'missing' ? 'không thấy file phim' : 'file phim đã đổi'}</span>` : '',
+    `<span>ổ đĩa còn ${p.free_gb} GB</span>`,
+  ].join('');
+  $('fRelink').hidden = p.source_status === 'ok';
+
+  const live = p.live;
+  const busy = p.running || (live && ['queued', 'running'].includes(live.state));
+  const moving = p.move && p.move.status === 'running';
+  const allDone = STAGES.every(([k]) => ['done', 'skipped'].includes(p.stages[k].status));
+  $('fRun').disabled = busy || moving || p.source_status !== 'ok' || allDone;
+  $('fRun').textContent = STAGES.some(([k]) => ['done', 'skipped', 'paused', 'interrupted', 'error', 'running', 'waiting'].includes(p.stages[k].status)) ? 'Tiếp tục' : 'Chạy';
+  $('fPause').disabled = !busy;
+  $('fSave').textContent = p.saved ? 'Lưu thành…' : 'Lưu dự án…';
+  $('fSave').disabled = moving;
+  if (live && live.state === 'queued') { $('fStatus').textContent = 'Đang xếp hàng chờ GPU (một việc khác đang chạy)...'; $('fStatus').className = 'status'; }
+  else if (live && live.state === 'error') { $('fStatus').textContent = 'Lỗi: ' + live.error; $('fStatus').className = 'status err'; }
+  else if (live && live.pressure) { $('fStatus').textContent = '⚠ Máy đang căng: ' + live.pressure; $('fStatus').className = 'status err'; }
+  else if (allDone) { $('fStatus').textContent = 'Đã phân tích xong toàn bộ phim.'; $('fStatus').className = 'status ok'; }
+  else { $('fStatus').textContent = ''; }
+
+  if (p.move) {
+    const m = p.move;
+    $('fMove').hidden = m.status === 'done' && Date.now() % 1 === 0 && false;
+    $('fMove').innerHTML = m.status === 'running'
+      ? `💾 <b>Đang lưu dự án</b> — ${esc(m.message || '')} (${m.percent || 0}%)`
+      : m.status === 'error' ? `✗ <b>Lưu dự án thất bại:</b> ${esc(m.error)}` : `✓ ${esc(m.message)}`;
+    $('fMove').hidden = false;
+  } else { $('fMove').hidden = true; }
+
+  $('fStages').innerHTML = STAGES.map(([k, label]) => {
+    const st = p.stages[k];
+    const isCur = live && live.stage === k && live.state === 'running';
+    const pct = isCur && live.percent ? ` · ${Math.round(live.percent)}%` : '';
+    return `<li class="${st.status}${isCur ? ' cur' : ''}"><span class="ic">${ST_ICON[st.status] || '○'}</span>
+      <span class="nm">${label}</span><span class="st">${ST_TEXT[st.status] || st.status}${pct}</span>
+      <span class="dt">${esc(stageDetail(k, st, p) || '')}</span></li>`;
+  }).join('');
+  if (live) {
+    $('fLog').textContent = live.messages.join('\n');
+    $('fLog').scrollTop = $('fLog').scrollHeight;
+  }
+
+  const hasScenes = p.scene_count > 0;
+  $('fResults').hidden = !hasScenes;
+  if (hasScenes) {
+    if (!$('fVideo').src && p.source_status === 'ok') $('fVideo').src = `/api/film/${curFilm}/video`;
+    const sig = `${p.scene_count}|${p.stages.synthesis.status}|${p.stages.synthesis.updated_at || ''}`;
+    if (sig !== filmTreeSig) { filmTreeSig = sig; loadFilmTree(); if (p.has_results) { loadOverview(); loadQAHistory(); } }
+  }
+  $('fQABox').hidden = !p.has_results;
+}
+
+async function loadFilmTree() {
+  const d = await api(`/api/film/${curFilm}/tree`);
+  const node = (n) => {
+    const head = `${tsLink(n.start, n.level === 'scene' ? n.id : null)} ${esc(n.title || (n.summary || '').slice(0, 110))}`;
+    if (n.level === 'scene') return `<div class="sc" data-node="${esc(n.id)}" data-t="${n.start}">${head}</div>`;
+    return `<details ${n.level === 'chapter' ? 'open' : ''}><summary>${head}</summary><div class="kids">${n.children.map(node).join('')}</div></details>`;
+  };
+  $('fTree').innerHTML = d.tree.length ? d.tree.map(node).join('') : '<div class="hint">Chưa có cảnh nào.</div>';
+}
+
+async function openScene(id) {
+  const sc = await api(`/api/film/${curFilm}/node/${encodeURIComponent(id)}`);
+  $('fTree').querySelectorAll('.sc').forEach((el) => el.classList.toggle('sel', el.dataset.node === id));
+  const c = sc.card || {};
+  const kf = (sc.keyframes || []).map((k) => `<img src="/api/film/${curFilm}/file/${k.file}" data-t="${k.t}" title="Tua tới ${hmsOf(k.t)}">`).join('');
+  $('fScene').innerHTML = `
+    <h3>${esc(id)} · ${tsLink(sc.start)} → ${hmsOf(sc.end)} <span class="badge">bản ${sc.revision}</span></h3>
+    <div class="frames">${kf}</div>
+    <p>${esc(c.mo_ta || '')}</p>
+    ${c.boi_canh ? `<div class="hint"><b>Bối cảnh:</b> ${esc(c.boi_canh)}</div>` : ''}
+    ${(c.nhan_vat || []).length ? `<div class="hint"><b>Nhân vật:</b> ${c.nhan_vat.map((n) => esc(n.goi_la || '')).join('; ')}</div>` : ''}
+    ${c.y_chinh_loi_thoai ? `<div class="hint"><b>Lời thoại (ý chính):</b> ${esc(c.y_chinh_loi_thoai)}</div>` : ''}
+    ${c.chu_tren_man_hinh ? `<div class="hint"><b>Chữ trên hình:</b> ${esc(c.chu_tren_man_hinh)}</div>` : ''}
+    ${(sc.events || []).length ? '<h4>Sự kiện</h4>' + sc.events.map((e) => `<div class="dlg">${tsLink(e.t)} ${esc(e.mo_ta)}</div>`).join('') : ''}
+    ${(sc.dialogue || []).length ? '<h4>Lời thoại</h4>' + sc.dialogue.map((d) => `<div class="dlg">${tsLink(d.start)} ${esc(d.text)}</div>`).join('') : ''}`;
+  seek(sc.start);
+}
+
+async function runFilmSearch() {
+  const q = $('fSearch').value.trim();
+  if (!q) { $('fHits').innerHTML = ''; return; }
+  const d = await api(`/api/film/${curFilm}/search?q=${encodeURIComponent(q)}`);
+  const KIND = { scene: 'cảnh', event: 'sự kiện', dialogue: 'lời thoại', seq: 'đoạn', chapter: 'chương', character: 'nhân vật' };
+  $('fHits').innerHTML = d.results.length
+    ? `<div class="hint">${d.results.length} kết quả${d.results[0].match === 'any' ? ' (khớp một phần)' : ''}</div>` + d.results.map((h) => `
+      <div class="hit" ${h.node_id && h.node_id.startsWith('scene_') ? `data-node="${esc(h.node_id)}"` : ''} ${h.t !== null ? `data-t="${h.t}"` : ''}>
+        ${h.t !== null ? `<span class="ts">${hmsOf(h.t)}</span>` : ''} <span class="tag">${KIND[h.kind] || h.kind}</span> ${esc(h.text.slice(0, 160))}
+      </div>`).join('')
+    : '<div class="hint">Không tìm thấy.</div>';
+}
+
+async function loadOverview() {
+  const d = await api(`/api/film/${curFilm}/summary`);
+  const f = d.film || {};
+  $('fOverview').innerHTML = `
+    <p><b>${esc(f.the_loai || '')}</b>${f.khong_khi ? ' · ' + esc(f.khong_khi) : ''}</p>
+    <p>${esc(f.tom_tat_ngan || '')}</p>
+    ${(f.cau_truc || []).length ? '<h4>Cấu trúc</h4>' + f.cau_truc.map((s) => `<div class="dlg"><span class="ts" data-t="${secOf(s.tu)}">${esc(s.tu)}</span> <b>${esc(s.phan)}</b> — ${esc(s.mo_ta)}</div>`).join('') : ''}
+    ${(d.characters || []).length ? '<h4>Nhân vật</h4>' + d.characters.map((c) => `<div class="dlg"><b>${esc(c.ten)}</b>${(c.bi_danh || []).length ? ` (còn gọi: ${esc(c.bi_danh.join(', '))})` : ''} — ${esc(c.mo_ta || '')}</div>`).join('') : ''}
+    ${(f.chu_de || []).length ? `<h4>Chủ đề</h4><p>${f.chu_de.map(esc).join(' · ')}</p>` : ''}`;
+}
+
+function qaHtml(r) {
+  const cites = (r.cited_scenes || []).map((c) => `<span class="ts" data-node="${esc(c.id)}" data-t="${secOf(c.start_hms)}">${esc(c.start_hms)}</span>`).join(' ');
+  const conf = { cao: 'tin cậy cao', vua: 'tin cậy vừa', thap: 'tin cậy thấp' }[r.confidence] || '';
+  return `<div class="qa-item"><div class="q">❓ ${esc(r.question)}</div><div class="a">${linkTimes(r.answer || '')}</div>
+    <div class="hint">${conf}${cites ? ' · cảnh trích: ' + cites : ''} · ${esc(r.created_at || '')}</div></div>`;
+}
+
+async function loadQAHistory() {
+  const d = await api(`/api/film/${curFilm}/qa`);
+  $('fQA').innerHTML = d.items.map(qaHtml).join('');
+}
+
+async function askFilm() {
+  const q = $('fQuestion').value.trim();
+  if (!q) return;
+  $('fAsk').disabled = true;
+  $('fAskStatus').textContent = 'Đang gửi câu hỏi...';
+  $('fAskStatus').className = 'status';
+  try {
+    const { job_id } = await api(`/api/film/${curFilm}/ask`, { question: q });
+    while (true) {
+      await new Promise((ok) => setTimeout(ok, 1500));
+      const j = await api('/api/jobs/' + job_id);
+      $('fAskStatus').textContent = j.status === 'queued' ? 'Đang xếp hàng chờ GPU...' : (j.messages.slice(-1)[0] || 'Đang trả lời...');
+      if (j.status === 'done') { $('fQA').insertAdjacentHTML('afterbegin', qaHtml(j.result)); $('fAskStatus').textContent = ''; $('fQuestion').value = ''; break; }
+      if (j.status === 'error') { $('fAskStatus').textContent = 'Lỗi: ' + j.error; $('fAskStatus').className = 'status err'; break; }
+    }
+  } catch (e) { $('fAskStatus').textContent = 'Lỗi: ' + e.message; $('fAskStatus').className = 'status err'; }
+  $('fAsk').disabled = false;
+}
+
+async function pickPath(kind, title) {
+  const { path } = await api('/api/film/pick', { kind, title });
+  return path;
+}
+
+$('fNew').onclick = () => { $('fNewForm').hidden = false; $('fNewStatus').textContent = ''; };
+$('fCancelNew').onclick = () => { $('fNewForm').hidden = true; };
+$('fPickSource').onclick = async () => {
+  const path = await pickPath('file', 'Chọn file phim');
+  if (path) {
+    $('fSource').value = path;
+    if (!$('fName').value) $('fName').value = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  }
+};
+$('fCreate').onclick = async () => {
+  $('fCreate').disabled = true;
+  $('fNewStatus').textContent = 'Đang tạo dự án (đọc thông tin phim, băm kiểm tra file)...';
+  $('fNewStatus').className = 'status';
+  try {
+    const p = await api('/api/film/projects', {
+      source: $('fSource').value.trim(), name: $('fName').value.trim() || null, language: $('fLang').value,
+      force_whisper: $('fForceWhisper').checked, copy_source: $('fCopySource').checked,
+    });
+    $('fNewForm').hidden = true;
+    await loadFilmProjects();
+    await selectFilm(p.id);
+  } catch (e) { $('fNewStatus').textContent = 'Lỗi: ' + e.message; $('fNewStatus').className = 'status err'; }
+  $('fCreate').disabled = false;
+};
+$('fOpen').onclick = async () => {
+  const path = await pickPath('folder', 'Chọn thư mục dự án (có file project.json)');
+  if (!path) return;
+  try { const p = await api('/api/film/open', { path }); await loadFilmProjects(); await selectFilm(p.id); }
+  catch (e) { alert(e.message); }
+};
+$('fChangeRoot').onclick = async () => {
+  const path = await pickPath('folder', 'Chọn thư mục mặc định cho dự án mới');
+  if (!path) return;
+  try { await api('/api/film/settings', { path }); loadFilmProjects(); } catch (e) { alert(e.message); }
+};
+$('fRun').onclick = async () => {
+  try { await api(`/api/film/${curFilm}/start`, {}); refreshFilm(); } catch (e) { alert(e.message); }
+};
+$('fPause').onclick = async () => { await api(`/api/film/${curFilm}/pause`, {}); refreshFilm(); };
+$('fSave').onclick = async () => {
+  const path = await pickPath('folder', 'Chọn thư mục để lưu dự án');
+  if (!path) return;
+  const running = filmData && filmData.live && ['queued', 'running'].includes(filmData.live.state);
+  if (!confirm(`Chuyển TOÀN BỘ dữ liệu dự án sang:\n${path}\n\n` +
+               (running ? 'Dự án đang chạy: sẽ tạm dừng sau cảnh hiện tại, chuyển xong thì tự chạy tiếp.\n' : '') +
+               'Thư mục cũ sẽ bị xoá sau khi đã chép và kiểm tra đủ. Tiếp tục?')) return;
+  try { await api(`/api/film/${curFilm}/save-as`, { path }); refreshFilm(); } catch (e) { alert(e.message); }
+};
+$('fRelink').onclick = async () => {
+  const path = await pickPath('file', 'Chọn lại file phim của dự án');
+  if (!path) return;
+  try { await api(`/api/film/${curFilm}/relink`, { path }); refreshFilm(); } catch (e) { alert(e.message); }
+};
+$('fSearchBtn').onclick = runFilmSearch;
+$('fSearch').onkeydown = (e) => { if (e.key === 'Enter') runFilmSearch(); };
+$('fAsk').onclick = askFilm;
+$('fQuestion').onkeydown = (e) => { if (e.key === 'Enter') askFilm(); };
+$('fDlReport').onclick = () => window.open(`/api/film/${curFilm}/file/07_phim/film_report.md`);
+$('fDlSrt').onclick = () => window.open(`/api/film/${curFilm}/file/01_loi_thoai/dialogue.srt`);
 
 function connectLiveness() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';

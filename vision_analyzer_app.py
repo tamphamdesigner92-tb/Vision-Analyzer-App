@@ -74,6 +74,42 @@ def video_duration(video_path):
     return 0.0
 
 
+def sample_frames(video_path, start, end, nframes):
+    """Lấy nframes khung hình PIL trải đều trong [start, end) - tua thẳng tới đoạn cần, KHÔNG
+    giải mã lại từ đầu phim. Trả về (khung hình, mốc giây của từng khung).
+
+    Dùng cho phim dài: đọc qua qwen_vl_utils với video_start/video_end phải giải mã từ đầu
+    file mỗi lần, cảnh ở phút 150 của một bộ phim sẽ tốn hàng phút chỉ để tới được đó.
+    seek() của ffmpeg nhảy tới KEYFRAME gần nhất trước mốc cần, nên sau khi seek vẫn giải mã
+    tiếp tới đúng mốc (bỏ bước này thì mọi mốc trong cùng một GOP ra y hệt một khung).
+    Theo cách làm của nhánh Vision-on-Mac (sample_video_frames)."""
+    import av
+
+    span = max(0.0, end - start)
+    if span <= 0 or nframes <= 0:
+        return [], []
+    targets = [start + span * (i + 0.5) / nframes for i in range(nframes)]
+    frames, times = [], []
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        container.seek(int(max(0.0, start) / stream.time_base), stream=stream)
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            t = float(frame.pts * stream.time_base)
+            # while: khi lấy mẫu dày hơn fps thật, nhiều mốc rơi vào cùng một khung hình.
+            while len(frames) < nframes and t + 1e-3 >= targets[len(frames)]:
+                frames.append(frame.to_image())
+                times.append(round(t, 3))
+            if len(frames) >= nframes or t > end + 1:
+                break
+    while frames and len(frames) < nframes:      # file cắt dở: bù bằng khung cuối
+        frames.append(frames[-1])
+        times.append(times[-1])
+    return frames, times
+
+
 def timeline_instruction(start, end):
     """Ràng buộc mốc thời gian gắn vào cuối mọi prompt video.
 
@@ -242,7 +278,7 @@ class LocalVisionAnalyzer:
         self.model.lm_head = new_lm_head.to(lm_head.qweight.device)
         self._report("[+] Đã vá lm_head thành công.\n", 6)
 
-    def _generate(self, messages):
+    def _generate(self, messages, max_new_tokens=1024):
         """Hàm suy luận chung"""
         text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
@@ -262,7 +298,7 @@ class LocalVisionAnalyzer:
         ).to(self.model.device)
 
         with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=1024, repetition_penalty=1.05)
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, repetition_penalty=1.05)
             generated_ids_trimmed = [
                 out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
             ]
@@ -291,6 +327,25 @@ class LocalVisionAnalyzer:
         usable_bytes = free_bytes * 0.5  # chừa chỗ cho KV cache và activation của phần LLM
         n_max = int((usable_bytes / bytes_per_patch_squared) ** 0.5)
         return max(2000, min(n_max, 16000))
+
+    def frames_for_budget(self, max_pixels=DEFAULT_MAX_PIXELS):
+        """Số khung hình tối đa (chẵn) một lượt suy luận chịu được với VRAM đang trống."""
+        pixels_per_frame = max(max_pixels, VIDEO_MIN_PIXELS_PER_FRAME)
+        n = int(2 * self._vram_patch_budget() / (pixels_per_frame / PATCH_PIXELS))
+        return max(FRAME_FACTOR, n - n % FRAME_FACTOR)
+
+    def describe_frames(self, frames, sample_fps, prompt, max_pixels=DEFAULT_MAX_PIXELS,
+                        max_new_tokens=1536):
+        """Mô tả một chuỗi khung hình đã lấy mẫu sẵn (vd: một cảnh phim). sample_fps phải là
+        mật độ lấy mẫu THẬT của chuỗi này để model tính đúng giây của từng khung."""
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "video", "video": frames, "sample_fps": sample_fps, "max_pixels": max_pixels},
+                {"type": "text", "text": prompt},
+            ],
+        }]
+        return self._generate(messages, max_new_tokens=max_new_tokens)
 
     def _plan_video_chunks(self, video_path, fps, max_pixels):
         return plan_video_chunks(video_path, fps, max_pixels, self._vram_patch_budget())

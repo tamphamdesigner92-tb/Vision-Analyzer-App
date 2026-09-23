@@ -41,3 +41,15 @@ av==18.1.0
 fastapi==0.141.1
 uvicorn==0.53.0
 pydantic==2.13.5
+
+# --- Phim dai (tab 3, thu muc film/) ---
+# Da thu `pip install --dry-run`: khong keo lech numpy<2 / tokenizers / transformers / torch dang ghim.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+scenedetect==0.7.1
+psutil==7.2.2
+# Tai rieng, khong qua pip (xem docs/PHIM_DAI.md):
+#   - llama.cpp ban CUDA 12.4 cho Windows -> tools/llama.cpp/bin/ (llama-server.exe)
+#   - Qwen3-30B-A3B-Instruct-2507 Q4_K_M GGUF -> cache Hugging Face (unsloth/...-GGUF)
+#   - Whisper large-v3 dinh dang faster-whisper -> models/faster-whisper-large-v3
+#     (chuyen tu ~/.cache/whisper/large-v3.pt bang tools/convert_whisper_pt.py)
