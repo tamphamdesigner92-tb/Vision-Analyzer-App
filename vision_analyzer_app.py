@@ -27,12 +27,12 @@ if sys.stdout.encoding is None or sys.stdout.encoding.lower() != "utf-8":
 # libavdevice 61. Nạp cả hai vào cùng một tiến trình thì runtime ObjC của macOS thấy các lớp
 # AVFFrameReceiver/AVFAudioReceiver được đăng ký hai lần và cảnh báo "may cause spurious
 # casting failures and mysterious crashes" - đúng ngay đường xử lý video của ứng dụng này.
-# Không bỏ được av: gptqmodel import nó ngay khi nạp gói (qua MiniCPM-O), và qwen_vl_utils
-# đọc video qua torchvision -> pyav. Nên bên bỏ đi phải là OpenCV.
+# Không bỏ được av: qwen_vl_utils đọc video qua torchvision -> pyav. Nên bên bỏ đi phải là
+# OpenCV.
 import av
 import torch
 from PIL import Image  # noqa: F401 - av.VideoFrame.to_image() cần Pillow
-from transformers import AutoConfig, AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 from transformers.video_utils import VideoMetadata
 from qwen_vl_utils import process_vision_info
 
@@ -76,25 +76,17 @@ class VisionStorageDB:
 # cộng đồng — đã thử và bị lỗi vùng nhận diện thị giác không đáng tin).
 AIHUB_HUB = _AIHUB_HUB
 
+# Chỉ dùng bản 3B. Bản 7B (AWQ 4-bit) đã bị bỏ khỏi nhánh Mac: trên MacBook 16GB nó chỉ đạt
+# ~0,23 token/giây (kernel AWQ giải nén int4 lại trong mỗi lần forward trên MPS), một video
+# ngắn mất ~20 phút. Danh sách vẫn giữ dạng list để giao diện/API không phải đổi.
 VL_MODELS = [
-    {
-        "key": "qwen2.5-vl-7b-awq",
-        "repo": "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
-        "label": "Qwen2.5-VL 7B (AWQ 4-bit) — mô tả tốt hơn, rất chậm",
-        "note": "Khoảng 0,23 token/giây trên máy này: một video ngắn mất ~20 phút. "
-                "Chậm vì trọng số int4 phải giải nén lại trong mỗi lần forward.",
-        # Đo thực trên máy này, dùng để ước tính thời gian chạy (xem _estimate_seconds).
-        "seconds_per_frame": 1.4,
-        "seconds_per_token": 4.3,
-    },
     {
         "key": "qwen2.5-vl-3b-bf16",
         "repo": "Qwen/Qwen2.5-VL-3B-Instruct",
-        "label": "Qwen2.5-VL 3B (bf16) — nhanh hơn nhiều, mô tả sơ hơn",
-        "note": "Khoảng 15,6 token/giây trên máy này — nhanh hơn bản 7B khoảng 67 lần, "
-                "một video ngắn xong trong khoảng một phút. Nhanh vì trọng số để nguyên "
-                "bf16, không phải giải nén lại mỗi lần chạy. Đổi lại mô hình nhỏ hơn nên "
-                "mô tả thường ngắn và ít chi tiết hơn bản 7B.",
+        "label": "Qwen2.5-VL 3B (bf16)",
+        "note": "Khoảng 15,6 token/giây trên máy này, một video ngắn xong trong khoảng một "
+                "phút. Trọng số để nguyên bf16 nên không phải giải nén lại mỗi lần chạy.",
+        # Đo thực trên máy này, dùng để ước tính thời gian chạy (xem _estimate_seconds).
         "seconds_per_frame": 0.51,
         "seconds_per_token": 0.064,
     },
@@ -170,9 +162,8 @@ FRAME_FACTOR = 2                                         # qwen_vl_utils làm tr
 # video dài lấy mẫu ở fps cao sẽ nhét hàng nghìn khung hình vào một lượt và tràn bộ nhớ.
 MIN_SAMPLED_FRAMES = 4
 MAX_SAMPLED_FRAMES = 768
-# Độ dài tối đa của phần chữ mô hình sinh ra. Trên máy này mỗi token mất khoảng 4 giây (xem
-# ghi chú tốc độ ở _estimate_seconds trong web_app.py), nên con số này là trần thời gian chạy
-# chứ không chỉ là trần độ dài: 1024 token tương đương hơn một tiếng cho MỘT đoạn video.
+# Độ dài tối đa của phần chữ mô hình sinh ra, cũng là trần thời gian sinh chữ của MỘT lượt
+# suy luận (bản 3B trên máy này ~0,064 giây/token, 512 token ~ nửa phút).
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "512"))
 DEFAULT_MAX_PIXELS = 360 * 420                           # độ phân giải mỗi frame khi lấy mẫu video
 # Ảnh tĩnh không đi qua qwen_vl_utils nên không có sàn min_pixels như video, nhưng vẫn cần một
@@ -461,30 +452,11 @@ class LocalVisionAnalyzer:
         self._report("[+] Khởi tạo mô hình thành công!\n", 8)
 
     def _load_model(self, model_id):
-        """Nạp model AWQ qua transformers/gptqmodel, chạy trên MPS (không cần CUDA).
-
-        Vá một lỗi khớp đường dẫn module đã xác minh trực tiếp: checkpoint AWQ gốc của Qwen
-        khai báo quantization_config.modules_to_not_convert=["visual"], nhưng ở các bản
-        transformers mới, submodule thị giác nằm dưới "model.visual...." (có tiền tố "model.").
-        Hàm khớp mẫu của transformers so khớp từ đầu chuỗi nên "visual" (không tiền tố) không
-        khớp được "model.visual...." — hậu quả là TOÀN BỘ vision tower bị coi là cần lượng tử
-        hoá, không tìm thấy trọng số nén tương ứng trong checkpoint (vốn lưu ở dạng thường vì
-        đã được loại trừ), nên bị nạp NGẪU NHIÊN thay vì trọng số thật đã huấn luyện — model
-        chạy được nhưng "mù", trả lời sai hoàn toàn về nội dung ảnh dù không báo lỗi gì.
-        Đã kiểm chứng bằng cách so LOAD REPORT của transformers trước/sau khi vá: trước vá có
-        hàng chục dòng MISSING/UNEXPECTED cho model.visual.*, sau vá sạch hoàn toàn."""
-        config = AutoConfig.from_pretrained(model_id)
-        qcfg = getattr(config, "quantization_config", None)
-        if qcfg:
-            qcfg["modules_to_not_convert"] = ["model.visual", "visual", "lm_head"]
-
+        """Nạp Qwen2.5-VL 3B (bf16) qua transformers, chạy trên MPS (không cần CUDA)."""
         # bfloat16 thay vì float16: fp16 tràn số (inf/nan) trong attention của vision tower
-        # trên backend MPS với checkpoint này, gây lỗi ngay cả khi tự nó không liên quan tới
-        # bộ nhớ. bfloat16 có dải giá trị rộng hơn nên không gặp lỗi này (đã kiểm chứng trực
-        # tiếp: cùng ảnh, fp16 lỗi "probability tensor contains inf/nan", bfloat16 chạy đúng).
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_id, config=config, dtype=torch.bfloat16
-        )
+        # trên backend MPS, gây lỗi "probability tensor contains inf/nan". bfloat16 có dải
+        # giá trị rộng hơn nên không gặp lỗi này.
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, dtype=torch.bfloat16)
         return model.to(_device())
 
     def _report(self, message, percent=None):

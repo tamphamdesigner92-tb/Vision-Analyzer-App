@@ -8,7 +8,7 @@ gán một cảnh quay có sẵn, đã sắp đúng thứ tự kịch bản, kè
 ```
 media_input/*.mp4, *.jpg
         │
-        │  ① Qwen2.5-VL-7B-Instruct-AWQ  (tab 1, đã có sẵn)
+        │  ① Qwen2.5-VL-3B-Instruct  (tab 1, đã có sẵn)
         ▼
 vision_storage/<tên file>/*.json     mô tả bằng chữ + keyframe
         │
@@ -27,11 +27,9 @@ chính xác hơn cách so vector, đổi lại phải chấm lần lượt N×M 
 
 Cả hai model đều chạy qua `transformers`, trên MPS, trong cùng một `.venv`:
 
-- Qwen2.5-VL-7B-Instruct-AWQ nạp qua `transformers` + `gptqmodel` (backend torch-native
-  `TorchAtenAwqLinear`, không cần CUDA). Có một lỗi khớp đường dẫn module đã vá thủ công trong
-  `vision_analyzer_app.py:_load_model()` — xem comment ở đó — nếu không vá, toàn bộ vùng nhận
-  diện thị giác bị nạp trọng số ngẫu nhiên thay vì trọng số thật, model chạy được nhưng "mù".
-  Dùng `dtype=torch.bfloat16` (không dùng `float16` — tràn số trên MPS với checkpoint này).
+- Qwen2.5-VL-3B-Instruct (bf16) nạp qua `transformers`. Dùng `dtype=torch.bfloat16` (không
+  dùng `float16` — tràn số trong vision tower trên MPS). Nhánh Mac chỉ dùng bản 3B: bản
+  7B-AWQ đã bị bỏ vì chỉ đạt ~0,23 token/giây trên máy 16GB.
 - Qwen3-Reranker (bản GPTQ int4 định dạng compressed-tensors) nạp qua `transformers` —
   weights được `compressed-tensors` tự giải nén khi cần, không cần CUDA.
 
@@ -72,7 +70,7 @@ Tự mở trình duyệt khi server sẵn sàng, tự tắt khi đóng tab trìn
 Đổi model bằng biến môi trường, không cần sửa code:
 
 ```
-export VL_MODEL_PATH=Qwen/Qwen2.5-VL-7B-Instruct-AWQ
+export VL_MODEL_PATH=/duong/dan/toi/Qwen2.5-VL-3B-Instruct
 export RERANKER_MODEL_ID=Qwen/Qwen3-Reranker-0.6B
 ```
 

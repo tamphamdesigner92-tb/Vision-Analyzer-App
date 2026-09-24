@@ -1,9 +1,8 @@
 # Vision Analyzer - macOS (Apple Silicon), mot venv duy nhat.
 #
-# Ca hai model (Qwen2.5-VL-7B-Instruct-AWQ va Qwen3-Reranker-4B) chay qua transformers, tren
-# MPS. Khong dung goi autoawq cu (CUDA-only, khong chay tren macOS) - AWQ nap qua gptqmodel,
-# backend torch-native (TorchAtenAwqLinear), khong can CUDA. Khong con bi ghim chat version
-# nhu ban Windows/CUDA cu.
+# Ca hai model (Qwen2.5-VL-3B-Instruct bf16 va Qwen3-Reranker-4B) chay qua transformers, tren
+# MPS, khong can CUDA. Nhanh Mac chi dung ban 3B: ban 7B-AWQ da bi bo (qua cham tren may 16GB),
+# nen khong con can gptqmodel.
 #
 # CACH CAI:
 #
@@ -11,15 +10,10 @@
 #   .venv/bin/python3 -m pip install --upgrade pip
 #   .venv/bin/python3 -m pip install -r requirements.txt
 #
-# LUU Y VE LOI DA GAP VA VA (xem vision_analyzer_app.py:_load_model va comment trong do):
-#   - Checkpoint AWQ goc khai bao modules_to_not_convert=["visual"], nhung o transformers moi
-#     module nam duoi "model.visual...." (co tien to "model."). Khong vao thi toan bo vision
-#     tower bi nap TRONG SO NGAU NHIEN thay vi trong so that - model chay duoc nhung "mu".
-#   - Phai dung dtype=torch.bfloat16 (KHONG dung float16): float16 tran so (inf/nan) trong
-#     attention cua vision tower tren MPS voi checkpoint nay.
+# LUU Y: phai dung dtype=torch.bfloat16 (KHONG dung float16) cho model thi giac: float16 tran
+# so (inf/nan) trong attention cua vision tower tren MPS.
 
-# --- Model thi giac (Qwen2.5-VL-7B-Instruct-AWQ qua transformers + gptqmodel) ---
-gptqmodel
+# --- Model thi giac (Qwen2.5-VL-3B-Instruct qua transformers) ---
 qwen-vl-utils
 torchvision
 
@@ -35,8 +29,8 @@ safetensors
 # KHONG cai opencv-python o day. Ca opencv-python lan av deu bundle mot ban ffmpeg rieng
 # (libavdevice 61 vs 62); nap ca hai vao cung mot tien trinh thi runtime ObjC cua macOS bao
 # lop AVFFrameReceiver/AVFAudioReceiver bi dang ky trung, kem canh bao "mysterious crashes".
-# av la thu khong bo duoc (gptqmodel import no ngay khi nap goi, qwen_vl_utils doc video qua
-# torchvision -> pyav), nen phan video cua ung dung doc thang bang av.
+# av la thu khong bo duoc (qwen_vl_utils doc video qua torchvision -> pyav), nen phan video
+# cua ung dung doc thang bang av.
 av
 numpy
 pillow

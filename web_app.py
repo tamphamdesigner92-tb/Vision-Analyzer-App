@@ -138,8 +138,7 @@ analyzer_lock = threading.Lock()
 # ==========================================
 # CHIA CHO TREN BO NHO HOP NHAT (RAM hop nhat 16GB tren Apple Silicon)
 # ==========================================
-# 16GB RAM hop nhat khong du cho Qwen2.5-VL-7B-AWQ (~6-7GB bfloat16, tru phan visual/lm_head
-# khong luong tu hoa) va Qwen3-Reranker-4B (giai nen tu compressed-tensors, ~8GB fp16) cung
+# 16GB RAM hop nhat khong du cho Qwen2.5-VL-3B (bf16, ~7GB) va Qwen3-Reranker-4B (giai nen tu compressed-tensors, ~8GB fp16) cung
 # luc: cong them bo nho cho OS/trinh duyet la tran. Nen mot thoi diem chi mot mo hinh duoc
 # nam trong bo nho, va chuyen tac vu thi doi cho. Moi lan doi mat vai chuc giay nap lai,
 # nhung doi lai khong bao gio tran bo nho giua chung.
@@ -488,22 +487,9 @@ def start_analyze(req: AnalyzeRequest):
 # ==========================================
 # UOC TINH THOI GIAN CHAY
 # ==========================================
-# Do thuc tren may nay (MacBook 16GB, Qwen2.5-VL-7B-AWQ qua gptqmodel/MPS):
-#
-#     prefill 12 khung hinh (1106 token vao)   17.2 giay
-#     sinh chu                                  4.3 giay / token
-#
-# Cho nen cham la kernel TorchAtenAwqLinear: no giai nen trong so int4 ra bf16 TRONG MOI
-# lan forward, do duoc 7.64 ms/lop so voi 0.20 ms cua mot lop Linear bf16 thuong - cham
-# gap 39 lan, nhan voi 196 lop. Day khong phai loi cua ung dung ma la cai gia cua ban AWQ
-# 4-bit tren MPS (xem ghi chu o dau requirements.txt).
-#
-# Con so cu o day ("55 giay moi doan") la do tu may CUDA doi truoc, sai khoang 25 lan so
-# voi thuc te tren macOS - va chinh no tao ra ky vong "chay mot phut la xong", khien moi
-# lan chay binh thuong deu trong nhu bi treo. Cho phep chinh lai bang bien moi truong de
-# ai doi model/may khac thi hieu chinh duoc, khong phai sua code.
-# Moi mo hinh mot toc do rieng (khai bao trong vision.VL_MODELS): ban 3B bf16 nhanh hon ban
-# 7B AWQ hang chuc lan, dung chung mot he so thi doi model xong lai bao sai gio nua.
+# Toc do do thuc tren may nay khai bao theo tung mo hinh trong vision.VL_MODELS
+# (seconds_per_frame, seconds_per_token). Chinh lai bang bien moi truong EST_SECONDS_PER_FRAME /
+# EST_SECONDS_PER_TOKEN neu doi may, khong phai sua code.
 TYPICAL_OUTPUT_TOKENS = int(os.environ.get("EST_OUTPUT_TOKENS", "300"))
 
 
